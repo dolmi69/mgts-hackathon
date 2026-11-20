@@ -11,6 +11,7 @@ venv/
 .env
 backend/data/app.db
 backend/data/*.db
+backend/data/russian_trusted_root_ca_pem.crt
 backend/test_app.db
 *.sqlite
 *.sqlite3

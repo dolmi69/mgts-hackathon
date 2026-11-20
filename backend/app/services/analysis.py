@@ -12,7 +12,7 @@ from ..models import AIAnalysis, Answer, Intern, Mentor
 from ..prompts import PROMPT_VERSION
 from ..utils import month_index
 from .anonymize import redact_pii
-from .llm import BaseProvider, LLMError, get_provider, provider_model_name
+from .llm import BaseProvider, get_provider, provider_model_name
 
 logger = logging.getLogger(__name__)
 
@@ -70,11 +70,11 @@ def analyze_answer(
         db.commit()
         return analysis
 
-    provider = provider or get_provider()
     month = None
     if answer.intern is not None and answer.intern.start_period:
         month = month_index(answer.intern.start_period, answer.period) + 1
     try:
+        provider = provider or get_provider()
         provider_result = provider.analyze(
             redacted_comment,
             answer.respondent_type,
@@ -100,13 +100,13 @@ def analyze_answer(
         answer.analysis_error = None
         db.commit()
         return analysis
-    except (LLMError, Exception) as exc:  # noqa: BLE001 - worker must not die on one answer
+    except Exception as exc:  # noqa: BLE001 - worker must not die on one answer
         logger.exception("Analysis failed for answer %s", answer.id)
         message = str(exc)[:2000]
         analysis = _upsert_analysis(
             db,
             answer,
-            model=provider_model_name(provider),
+            model=provider_model_name(provider) if provider else settings.llm_provider,
             prompt_version=PROMPT_VERSION,
             sentiment=None,
             topics=[],

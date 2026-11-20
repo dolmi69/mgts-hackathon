@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     seed_analyze: bool = False
     analyze_in_background: bool = True
 
-    llm_provider: str = "mock"  # mock | openai | yandex
+    llm_provider: str = "mock"  # mock | openai | yandex | gigachat
     llm_api_key: str | None = None
     llm_base_url: str = "https://api.deepseek.com/v1"
     llm_model: str = "deepseek-chat"
@@ -33,6 +33,10 @@ class Settings(BaseSettings):
     llm_timeout_seconds: float = 40.0
     llm_max_retries: int = 2
     llm_temperature: float = 0.0
+    gigachat_base_url: str = "https://api.giga.chat/v1"
+    gigachat_model: str = "GigaChat"
+    gigachat_scope: str = "GIGACHAT_API_PERS"
+    gigachat_ca_bundle: str = ""
 
     webhook_secret: str | None = None
     dashboard_user: str | None = None

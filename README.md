@@ -23,7 +23,7 @@ MVP для хакатона «ИИ в бизнес-процессах»: даш�
   цитатами.
 - **Приём данных**: CSV-импорт и вебхук Яндекс Форм (плюс универсальный
   canonical-вебхук). Повторный ответ с тем же ID ничего не меняет.
-- **LLM**: `mock` для офлайн-демо и тестов, OpenAI-compatible (DeepSeek/OpenAI)
+- **LLM**: `mock` для офлайн-демо и тестов, GigaChat, OpenAI-compatible (DeepSeek/OpenAI)
   и YandexGPT. Провайдер переключается переменными окружения.
 - **Приватность**: перед отправкой в LLM из текста вырезаются имена, email,
   телефоны и телеграм-контакты. Исходные ответы хранятся без изменений отдельно
@@ -38,7 +38,7 @@ MVP для хакатона «ИИ в бизнес-процессах»: даш�
 | Backend | Python 3.12, FastAPI, SQLAlchemy 2, Pydantic 2 |
 | Хранение | PostgreSQL 16 в Docker, SQLite для локального запуска |
 | Frontend | HTML + CSS + vanilla JavaScript, Chart.js (локальный файл) |
-| LLM | mock, OpenAI-compatible (DeepSeek), YandexGPT |
+| LLM | mock, GigaChat, OpenAI-compatible (DeepSeek), YandexGPT |
 | Инфраструктура | Docker Compose, Caddy (reverse proxy, HTTPS) |
 | Тесты | pytest, 19 тестов |
 
@@ -225,6 +225,23 @@ Accepted`; анализ выполняется в фоне (BackgroundTasks) и�
 LLM_PROVIDER=mock
 ```
 
+GigaChat:
+
+```dotenv
+LLM_PROVIDER=gigachat
+LLM_API_KEY=<ключ авторизации из кабинета GigaChat>
+GIGACHAT_MODEL=GigaChat
+GIGACHAT_SCOPE=GIGACHAT_API_PERS
+GIGACHAT_CA_BUNDLE=data/russian_trusted_root_ca_pem.crt
+```
+
+Скачайте [корневой сертификат Минцифры](https://developers.sber.ru/docs/ru/gigachat/certificates)
+в `backend/data/russian_trusted_root_ca_pem.crt`. Путь в настройках считается от
+папки `backend` (в Docker файл попадает в образ при сборке). Для существующего
+подключения можно задать `GIGACHAT_BASE_URL=https://gigachat.devices.sberbank.ru/api/v1`.
+Новые ответы из вебхука автоматически отправляются на анализ при
+`ANALYZE_IN_BACKGROUND=true`.
+
 DeepSeek / любой OpenAI-compatible endpoint:
 
 ```dotenv
@@ -331,9 +348,6 @@ mgts-intern-risk/
 - Пороги правил — стартовая гипотеза; их нужно согласовать с организаторами и
   проверить на реальных анкетах. В демо специально есть контрольные случаи без
   сигналов.
-- GigaChat пока не подключён: API отличается от OpenAI-compatible (OAuth и
-  свой формат). Добавляется отдельным классом `BaseProvider` по образцу
-  YandexGPT, если организаторы выберут эту модель.
 - Нет SSO, ролей и журнала аудита действий HR — для пилота достаточно Basic
   Auth, для продакшена нужен корпоративный вход и аудит.
 - Адаптер Яндекс Форм — best-effort; при несовпадении payload нужен маппинг по

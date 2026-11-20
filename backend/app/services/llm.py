@@ -3,14 +3,19 @@ from __future__ import annotations
 import json
 import logging
 import re
+import ssl
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from functools import lru_cache
+from threading import Lock
 from typing import Any
+from uuid import uuid4
 
+import certifi
 import httpx
 
-from ..config import settings
+from ..config import BASE_DIR, settings
 from ..prompts import PROMPT_VERSION, SYSTEM_PROMPT, build_user_prompt
 from ..schemas import AIResult
 
@@ -403,6 +408,72 @@ class OpenAICompatibleProvider(BaseProvider):
         raise LLMError(f"LLM request failed: {last_error}")
 
 
+class GigaChatProvider(OpenAICompatibleProvider):
+    """Use the shared chat parser with GigaChat's OAuth and HTTP endpoints."""
+
+    name = "gigachat"
+    oauth_url = "https://ngw.devices.sberbank.ru:9443/api/v2/oauth"
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.base_url = settings.gigachat_base_url.rstrip("/")
+        self.model = settings.gigachat_model
+        self._json_mode = False
+        self._tls = ssl.create_default_context(cafile=certifi.where())
+        if settings.gigachat_ca_bundle:
+            self._tls.load_verify_locations(cafile=BASE_DIR / settings.gigachat_ca_bundle)
+        self._token_lock = Lock()
+        self._access_token = ""
+        self._token_deadline = 0.0
+
+    def _token(self, client: httpx.Client) -> str:
+        with self._token_lock:
+            if time.monotonic() >= self._token_deadline:
+                response = client.post(
+                    self.oauth_url,
+                    headers={
+                        "Authorization": f"Basic {settings.llm_api_key}",
+                        "RqUID": str(uuid4()),
+                        "Accept": "application/json",
+                    },
+                    data={"scope": settings.gigachat_scope},
+                )
+                response.raise_for_status()
+                body = response.json()
+                token = body.get("access_token") if isinstance(body, dict) else None
+                if not isinstance(token, str) or not token:
+                    raise LLMError("GigaChat OAuth response has no access token")
+                self._access_token = token
+                # Refresh before GigaChat's 30-minute lifetime expires.
+                self._token_deadline = time.monotonic() + 25 * 60
+            return self._access_token
+
+    def _request(self, messages: list[dict[str, str]], json_mode: bool) -> dict[str, Any]:
+        with httpx.Client(timeout=self.timeout, verify=self._tls) as client:
+            token = self._token(client)
+            response = client.post(
+                f"{self.base_url}/chat/completions",
+                headers={"Authorization": f"Bearer {token}"},
+                json={
+                    "model": self.model,
+                    "messages": messages,
+                    "temperature": max(0.01, settings.llm_temperature),
+                    "max_tokens": 700,
+                },
+            )
+            if response.status_code == 401:
+                with self._token_lock:
+                    if self._access_token == token:
+                        self._token_deadline = 0.0
+            response.raise_for_status()
+            return response.json()
+
+
+@lru_cache(maxsize=1)
+def _gigachat_provider() -> GigaChatProvider:
+    return GigaChatProvider()
+
+
 class YandexGPTProvider(BaseProvider):
     """YandexGPT completion API provider."""
 
@@ -483,6 +554,8 @@ def get_provider() -> BaseProvider:
         return OpenAICompatibleProvider()
     if provider in {"yandex", "yandexgpt"}:
         return YandexGPTProvider()
+    if provider == "gigachat":
+        return _gigachat_provider()
     logger.warning("Unknown LLM_PROVIDER=%s, falling back to mock", provider)
     return MockProvider()
 
