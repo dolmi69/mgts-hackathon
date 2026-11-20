@@ -1,0 +1,25 @@
+# Local: DOMAIN=http://localhost
+# Production: DOMAIN=demo.example.ru and DNS A/AAAA records must point to this host.
+{$DOMAIN:http://localhost} {
+    encode gzip
+
+    # Optional: restrict webhook by Yandex Forms source network.
+    # @webhook {
+    #     path /api/webhooks/*
+    #     remote_ip 2a02:6b8:c00::/40
+    # }
+    # handle @webhook {
+    #     reverse_proxy api:8000
+    # }
+
+    @api path /api/* /docs /docs/* /openapi.json /redoc /redoc/*
+    handle @api {
+        reverse_proxy api:8000
+    }
+
+    handle {
+        root * /srv/frontend
+        try_files {path} /index.html
+        file_server
+    }
+}

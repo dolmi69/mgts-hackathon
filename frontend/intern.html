@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Карточка стажёра · МГТС</title>
+  <meta name="theme-color" content="#f5f5f7">
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="container topbar-inner">
+      <a class="brand" href="index.html">
+        <span class="brand-mark">МГТС</span>
+        <span class="brand-copy">
+          <strong>Сигналы по стажёрам</strong>
+          <small>ИИ размечает текст, решение принимает HR</small>
+        </span>
+      </a>
+      <div class="topbar-meta">
+        <a href="index.html">← Все стажёры</a>
+        <a href="docs" target="_blank" rel="noreferrer">API</a>
+      </div>
+    </div>
+  </header>
+
+  <main class="container page">
+    <div id="error" class="alert" role="alert" hidden></div>
+
+    <section id="profile" class="profile-head">
+      <div class="profile-title">
+        <span id="avatar" class="avatar avatar-large">—</span>
+        <div>
+          <p class="eyebrow">Карточка стажёра</p>
+          <h1 id="intern-name">Загрузка…</h1>
+          <p id="intern-meta" class="lede"></p>
+        </div>
+      </div>
+      <div id="profile-stats" class="profile-stats"></div>
+    </section>
+
+    <section class="grid-two intern-grid">
+      <article class="card">
+        <header class="card-head">
+          <div>
+            <h2>Оценки по месяцам</h2>
+            <p class="muted">Стажёр и наставник отвечают на одну анкету независимо</p>
+          </div>
+        </header>
+        <div class="chart-wrap"><canvas id="score-chart" aria-label="График оценок стажёра и наставника"></canvas></div>
+      </article>
+
+      <article class="card">
+        <header class="card-head">
+          <div>
+            <h2>Сигналы</h2>
+            <p id="flags-hint" class="muted">Каждый флажок объяснён и связан с ответом</p>
+          </div>
+        </header>
+        <div id="flags" class="flags-list"></div>
+      </article>
+    </section>
+
+    <section class="card">
+      <header class="card-head">
+        <div>
+          <h2>История ответов</h2>
+          <p class="muted">Вывод ИИ и исходные комментарии стажёра и наставника рядом</p>
+        </div>
+      </header>
+      <div id="timeline" class="timeline"></div>
+    </section>
+
+    <p class="footnote">
+      ИИ не выставляет оценку риска. Он размечает комментарий: настроение, тему, резюме и цитату.
+      Флажок появляется только там, где данные расходятся между собой или пропущен опрос.
+    </p>
+  </main>
+
+  <script src="vendor/chart.umd.min.js"></script>
+  <script type="module" src="js/intern.js"></script>
+</body>
+</html>

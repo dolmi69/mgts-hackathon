@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>МГТС · Сигналы по стажёрам</title>
+  <meta name="description" content="Дашборд сигналов по стажёрам: кому из стажёров стоит уделить внимание и почему.">
+  <meta name="theme-color" content="#f5f5f7">
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="container topbar-inner">
+      <a class="brand" href="index.html">
+        <span class="brand-mark">МГТС</span>
+        <span class="brand-copy">
+          <strong>Сигналы по стажёрам</strong>
+          <small>ИИ размечает текст, решение принимает HR</small>
+        </span>
+      </a>
+      <div class="topbar-meta">
+        <span id="as-of">Данные загружаются…</span>
+        <a href="docs" target="_blank" rel="noreferrer">API</a>
+      </div>
+    </div>
+  </header>
+
+  <main class="container page">
+    <section class="page-head">
+      <div>
+        <p class="eyebrow">Программа стажировок</p>
+        <h1>Кому уделить внимание</h1>
+        <p class="lede">Короткий список на месяц: у кого есть сигнал, какое правило сработало и на каких ответах это основано.</p>
+      </div>
+      <div class="controls">
+        <label for="period-select">Месяц</label>
+        <select id="period-select" aria-label="Выберите месяц"></select>
+        <button id="refresh" class="button" type="button">Обновить</button>
+      </div>
+    </section>
+
+    <div id="error" class="alert" role="alert" hidden></div>
+
+    <section id="kpis" class="kpi-grid" aria-label="Показатели программы"></section>
+
+    <section class="grid-two">
+      <article class="card">
+        <header class="card-head">
+          <div>
+            <h2>Динамика оценок</h2>
+            <p class="muted">Средние оценки стажёров и наставников по месяцам</p>
+          </div>
+        </header>
+        <div class="chart-wrap"><canvas id="dynamics-chart" aria-label="График динамики оценок"></canvas></div>
+      </article>
+
+      <article class="card">
+        <header class="card-head">
+          <div>
+            <h2>Частые проблемы</h2>
+            <p class="muted">Темы, на которые жалуются в комментариях</p>
+          </div>
+        </header>
+        <div class="chart-wrap"><canvas id="topics-chart" aria-label="График частых проблем"></canvas></div>
+        <div id="topics-empty" class="empty" hidden>За этот месяц жалоб в комментариях нет.</div>
+      </article>
+    </section>
+
+    <section class="card table-card">
+      <header class="card-head table-head">
+        <div>
+          <h2>Стажёры</h2>
+          <p class="muted">Сначала те, у кого высокий сигнал. Нажмите на имя, чтобы увидеть источник.</p>
+        </div>
+        <div class="legend" aria-label="Легенда серьёзности">
+          <span><i class="dot high"></i> высокий</span>
+          <span><i class="dot medium"></i> средний</span>
+          <span><i class="dot low"></i> наблюдение</span>
+        </div>
+      </header>
+      <div class="table-scroll">
+        <table class="interns-table">
+          <thead>
+            <tr>
+              <th>Стажёр</th>
+              <th>Наставник</th>
+              <th>Оценка</th>
+              <th>Сигналы</th>
+              <th>Анализ</th>
+            </tr>
+          </thead>
+          <tbody id="interns-body"></tbody>
+        </table>
+      </div>
+      <div id="interns-empty" class="empty" hidden>За этот месяц ответов нет.</div>
+    </section>
+
+    <p class="footnote">
+      Флажок — это не решение о человеке, а повод посмотреть исходный ответ.
+      ИИ размечает только комментарии; правила риска считаются по оценкам, тексту и пропускам.
+    </p>
+  </main>
+
+  <script src="vendor/chart.umd.min.js"></script>
+  <script type="module" src="js/dashboard.js"></script>
+</body>
+</html>
