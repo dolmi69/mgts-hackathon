@@ -7,7 +7,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
-from .api import dashboard, health, imports, interns, webhooks
+from .api import dashboard, feedback, health, imports, interns, webhooks
 from .config import settings
 from .database import SessionLocal, init_db
 from .seed_data import seed_database
@@ -47,6 +47,7 @@ app.include_router(webhooks.router)
 app.include_router(imports.router)
 app.include_router(dashboard.router)
 app.include_router(interns.router)
+app.include_router(feedback.router)
 
 frontend_dir = Path(settings.frontend_dir)
 if frontend_dir.exists():

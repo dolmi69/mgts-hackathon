@@ -8,11 +8,12 @@ from sqlalchemy.orm import Session
 
 from ..config import settings
 from ..database import SessionLocal
-from ..models import AIAnalysis, Answer, Intern, Mentor
+from ..models import DEMO_INTERN_STATUS, AIAnalysis, Answer, Intern, Mentor
 from ..prompts import PROMPT_VERSION
 from ..utils import month_index
 from .anonymize import redact_pii
 from .llm import BaseProvider, get_provider, provider_model_name
+from .rules import recompute_flags, replace_demo_flags
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +34,12 @@ def _upsert_analysis(db: Session, answer: Answer, **values) -> AIAnalysis:
         setattr(analysis, key, value)
     db.flush()
     return analysis
+
+
+def _commit_analysis(db: Session, answer: Answer) -> None:
+    if answer.intern.status == DEMO_INTERN_STATUS:
+        replace_demo_flags(db, answer)
+    db.commit()
 
 
 def analyze_answer(
@@ -67,7 +74,7 @@ def analyze_answer(
             raw_response={"comment": ""},
             error=None,
         )
-        db.commit()
+        _commit_analysis(db, answer)
         return analysis
 
     month = None
@@ -98,10 +105,11 @@ def analyze_answer(
         )
         answer.analysis_status = "done"
         answer.analysis_error = None
-        db.commit()
+        _commit_analysis(db, answer)
         return analysis
     except Exception as exc:  # noqa: BLE001 - worker must not die on one answer
         logger.exception("Analysis failed for answer %s", answer.id)
+        db.rollback()
         message = str(exc)[:2000]
         analysis = _upsert_analysis(
             db,
@@ -120,7 +128,7 @@ def analyze_answer(
         )
         answer.analysis_status = "failed"
         answer.analysis_error = message
-        db.commit()
+        _commit_analysis(db, answer)
         if raise_errors:
             raise
         return analysis
@@ -177,8 +185,6 @@ def analyze_pending(
     for answer_id in ids:
         analyze_answer_by_id(answer_id, provider=provider)
     if ids:
-        from .rules import recompute_flags
-
         recompute_flags(db)
     return len(ids)
 

@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     seed_on_startup: bool = False
     seed_analyze: bool = False
     analyze_in_background: bool = True
+    demo_feedback_enabled: bool = False
 
     llm_provider: str = "mock"  # mock | openai | yandex | gigachat
     llm_api_key: str | None = None

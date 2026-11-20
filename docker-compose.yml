@@ -35,6 +35,7 @@ services:
       SEED_ON_STARTUP: "true"
       SEED_ANALYZE: ${SEED_ANALYZE:-false}
       ANALYZE_IN_BACKGROUND: ${ANALYZE_IN_BACKGROUND:-true}
+      DEMO_FEEDBACK_ENABLED: ${DEMO_FEEDBACK_ENABLED:-false}
       FRONTEND_DIR: /srv/frontend
       TZ: Europe/Moscow
     volumes:

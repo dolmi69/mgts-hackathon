@@ -18,6 +18,8 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
 
+DEMO_INTERN_STATUS = "demo"
+
 
 def utcnow() -> datetime:
     return datetime.now(timezone.utc)

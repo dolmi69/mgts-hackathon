@@ -191,6 +191,7 @@ class DashboardSummary(BaseModel):
     period: date
     period_label: str
     as_of: date
+    demo_feedback_enabled: bool = False
     kpis: KpiOut
     dynamics: list[DynamicsPoint] = Field(default_factory=list)
     top_topics: list[TopicCount] = Field(default_factory=list)

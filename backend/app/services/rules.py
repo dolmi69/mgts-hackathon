@@ -10,7 +10,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session, selectinload
 
 from ..config import settings
-from ..models import Answer, Intern, RiskFlag
+from ..models import DEMO_INTERN_STATUS, Answer, Intern, RiskFlag
 from ..utils import (
     add_months,
     format_period,
@@ -337,14 +337,31 @@ def evaluate_intern(
     return result
 
 
+def replace_demo_flags(db: Session, answer: Answer) -> None:
+    """Store signals for one isolated demo response in the analysis transaction."""
+    db.execute(delete(RiskFlag).where(RiskFlag.intern_id == answer.intern_id))
+    db.add_all(
+        RiskFlag(intern_id=answer.intern_id, **item)
+        for item in evaluate_intern(answer.intern, [answer], answer.period)
+    )
+
+
 def recompute_flags(db: Session) -> int:
-    """Recompute all flags. Idempotent and intentionally simple for the MVP."""
-    interns = db.scalars(select(Intern)).all()
+    """Recompute flags for the internship program."""
+    program_interns = select(Intern).where(Intern.status != DEMO_INTERN_STATUS)
+    interns = db.scalars(program_interns).all()
     answers = db.scalars(
-        select(Answer).options(selectinload(Answer.analysis)).order_by(Answer.period)
+        select(Answer)
+        .join(Intern)
+        .where(Intern.status != DEMO_INTERN_STATUS)
+        .options(selectinload(Answer.analysis))
+        .order_by(Answer.period)
     ).all()
+    delete_program_flags = delete(RiskFlag).where(
+        RiskFlag.intern_id.in_(program_interns.with_only_columns(Intern.id))
+    )
     if not answers:
-        db.execute(delete(RiskFlag))
+        db.execute(delete_program_flags)
         db.commit()
         return 0
 
@@ -360,19 +377,9 @@ def recompute_flags(db: Session) -> int:
         if not intern_answers:
             continue
         for item in evaluate_intern(intern, intern_answers, as_of, config):
-            new_flags.append(
-                RiskFlag(
-                    intern_id=intern.id,
-                    period=item["period"],
-                    rule_code=item["rule_code"],
-                    severity=item["severity"],
-                    title=item["title"],
-                    explanation=item["explanation"],
-                    evidence_answer_ids=item["evidence_answer_ids"],
-                )
-            )
+            new_flags.append(RiskFlag(intern_id=intern.id, **item))
 
-    db.execute(delete(RiskFlag))
+    db.execute(delete_program_flags)
     db.add_all(new_flags)
     db.commit()
     return len(new_flags)

@@ -9,8 +9,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from ..auth import require_dashboard_auth
+from ..config import settings
 from ..database import get_db
-from ..models import Answer, Intern, RiskFlag
+from ..models import DEMO_INTERN_STATUS, Answer, Intern, RiskFlag
 from ..schemas import (
     DashboardSummary,
     DynamicsPoint,
@@ -31,7 +32,13 @@ router = APIRouter(tags=["dashboard"], dependencies=[Depends(require_dashboard_a
 
 def _periods(db: Session) -> list[date]:
     return list(
-        db.scalars(select(Answer.period).distinct().order_by(Answer.period.desc())).all()
+        db.scalars(
+            select(Answer.period)
+            .join(Intern)
+            .where(Intern.status != DEMO_INTERN_STATUS)
+            .distinct()
+            .order_by(Answer.period.desc())
+        ).all()
     )
 
 
@@ -41,7 +48,13 @@ def _selected_period(db: Session, period: str | None) -> date:
             return parse_period(period)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-    latest = db.scalar(select(Answer.period).order_by(Answer.period.desc()).limit(1))
+    latest = db.scalar(
+        select(Answer.period)
+        .join(Intern)
+        .where(Intern.status != DEMO_INTERN_STATUS)
+        .order_by(Answer.period.desc())
+        .limit(1)
+    )
     return latest or date.today().replace(day=1)
 
 
@@ -59,12 +72,26 @@ def dashboard_summary(
     answers = list(
         db.scalars(
             select(Answer)
+            .join(Intern)
+            .where(Intern.status != DEMO_INTERN_STATUS)
             .options(selectinload(Answer.analysis))
             .order_by(Answer.period, Answer.id)
         ).all()
     )
-    interns = list(db.scalars(select(Intern).options(selectinload(Intern.mentor))).all())
-    flags = list(db.scalars(select(RiskFlag).where(RiskFlag.period == selected)).all())
+    interns = list(
+        db.scalars(
+            select(Intern)
+            .where(Intern.status != DEMO_INTERN_STATUS)
+            .options(selectinload(Intern.mentor))
+        ).all()
+    )
+    flags = list(
+        db.scalars(
+            select(RiskFlag)
+            .join(Intern)
+            .where(RiskFlag.period == selected, Intern.status != DEMO_INTERN_STATUS)
+        ).all()
+    )
     all_periods = sorted({answer.period for answer in answers})
     as_of = max(all_periods) if all_periods else selected
 
@@ -193,6 +220,7 @@ def dashboard_summary(
         period=selected,
         period_label=format_period(selected),
         as_of=as_of,
+        demo_feedback_enabled=settings.demo_feedback_enabled,
         kpis=KpiOut(
             interns=len(interns),
             responded=len(responded_ids),

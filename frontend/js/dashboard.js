@@ -33,6 +33,7 @@ function cacheElements() {
   els.empty = document.getElementById("interns-empty");
   els.topicsEmpty = document.getElementById("topics-empty");
   els.asOf = document.getElementById("as-of");
+  els.demoFeedback = document.getElementById("demo-feedback-link");
   els.dynamics = document.getElementById("dynamics-chart");
   els.topics = document.getElementById("topics-chart");
 }
@@ -248,6 +249,7 @@ function renderTable(summary) {
 }
 
 function render(summary) {
+  els.demoFeedback.hidden = !summary.demo_feedback_enabled;
   els.asOf.textContent = `Данные: ${formatPeriod(summary.as_of)}`;
   renderKpis(summary);
   renderCharts(summary);
@@ -283,6 +285,8 @@ async function init() {
     const periods = await apiGet("/api/periods");
     state.periods = periods;
     if (!periods.length) {
+      const summary = await apiGet("/api/dashboard/summary");
+      els.demoFeedback.hidden = !summary.demo_feedback_enabled;
       els.asOf.textContent = "Нет данных";
       els.kpis.innerHTML = "";
       els.table.hidden = true;

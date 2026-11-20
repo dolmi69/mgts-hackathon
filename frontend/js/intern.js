@@ -184,7 +184,7 @@ const SCORE_LABELS = {
 };
 
 function renderAnalysis(answer) {
-  if (answer.analysis_status === "pending") {
+  if (["pending", "processing"].includes(answer.analysis_status)) {
     return '<div class="analysis"><span class="badge pending">анализ идёт</span><p class="analysis-summary">Комментарий уже сохранён, разметка появится после обработки.</p></div>';
   }
   if (answer.analysis_status === "failed") {

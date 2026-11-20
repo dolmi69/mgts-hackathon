@@ -4,8 +4,13 @@ const MONTHS = [
 ];
 
 export async function apiGet(path) {
+  return apiRequest(path);
+}
+
+export async function apiRequest(path, options = {}) {
   const response = await fetch(path, {
-    headers: { Accept: "application/json" },
+    ...options,
+    headers: { Accept: "application/json", ...options.headers },
     credentials: "same-origin",
     cache: "no-store",
   });

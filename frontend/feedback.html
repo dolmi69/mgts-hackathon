@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f5f5f7">
+  <title>Демо-анкета · МГТС</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="container topbar-inner">
+      <a class="brand" href="index.html">
+        <span class="brand-mark">МГТС</span>
+        <span class="brand-copy"><strong>Сигналы по стажёрам</strong></span>
+      </a>
+      <nav class="topbar-meta" aria-label="Навигация">
+        <a href="index.html">К дашборду</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container page feedback-page">
+    <section class="page-head">
+      <div>
+        <h1>Демо-анкета</h1>
+        <p class="lede">Оцените месяц стажировки и расскажите, как он прошёл.
+          Для демо используйте вымышленный отзыв без личных данных.</p>
+      </div>
+    </section>
+
+    <form class="card" id="feedback-form" method="post">
+      <fieldset class="feedback-fields">
+        <legend>Как прошёл месяц?</legend>
+        <label for="feedback-score">Общая оценка</label>
+        <select id="feedback-score" name="score" required>
+          <option value="">Выберите от 1 до 5</option>
+          <option value="1">1</option>
+          <option value="2">2</option>
+          <option value="3">3</option>
+          <option value="4">4</option>
+          <option value="5">5</option>
+        </select>
+        <label for="feedback-comment">Комментарий</label>
+        <textarea id="feedback-comment" name="comment" required maxlength="2000" rows="4"
+          placeholder="Что получилось? С чем были трудности?"></textarea>
+        <button class="button" type="submit">Отправить анкету</button>
+      </fieldset>
+
+      <div class="feedback-result">
+        <p id="feedback-status" role="status"></p>
+        <p id="feedback-error" role="alert" class="alert" hidden></p>
+        <a id="feedback-card" hidden>Открыть карточку стажёра</a>
+        <button class="button" id="feedback-check" type="button" hidden>Проверить статус</button>
+      </div>
+    </form>
+  </main>
+  <script type="module" src="js/feedback.js"></script>
+</body>
+</html>
