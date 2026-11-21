@@ -7,8 +7,10 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
+from .security import BodySizeLimitMiddleware, SecurityHeadersMiddleware, SameOriginMiddleware
+
 from .api import dashboard, feedback, health, imports, interns, signals, webhooks
-from .auth import validate_deployment_auth
+from .auth import app_env, validate_deployment_auth
 from .config import settings
 from .database import SessionLocal, init_db
 from .seed_data import seed_database
@@ -42,7 +44,16 @@ app = FastAPI(
     ),
     version="0.1.0",
     lifespan=lifespan,
+    # The API map is a convenience for local development only.
+    docs_url="/docs" if app_env() == "dev" else None,
+    redoc_url="/redoc" if app_env() == "dev" else None,
+    openapi_url="/openapi.json" if app_env() == "dev" else None,
 )
+
+# Order: the last added middleware runs first.
+app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(SameOriginMiddleware)
+app.add_middleware(BodySizeLimitMiddleware)
 
 app.include_router(health.router)
 app.include_router(webhooks.router)

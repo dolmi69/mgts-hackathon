@@ -18,6 +18,10 @@ class DemoInternError(ValueError):
     pass
 
 
+def intern_exists(db: Session, external_id: str) -> bool:
+    return db.scalar(select(Intern.id).where(Intern.external_id == external_id)) is not None
+
+
 
 def get_or_create_mentor(
     db: Session,
@@ -151,7 +155,9 @@ def upsert_answer(
                 status=intern_status,
             )
             mentor = get_or_create_mentor(db, canonical.mentor_external_id)
-            if mentor is not None:
+            # The roster (CSV import) owns the intern–mentor link. A survey
+            # answer may fill a missing link but never reassigns the mentor.
+            if mentor is not None and intern.mentor_id is None:
                 intern.mentor_id = mentor.id
 
             scores = canonical.scores.model_dump(exclude_none=True)

@@ -1,12 +1,13 @@
 services:
   db:
-    image: postgres:16-alpine
+    image: postgres:16-alpine@sha256:1d5b02d3a9941fbd52437db4107f8c52d6297dac553ca1e5c299ebb3756b4857
     environment:
       POSTGRES_DB: mgts
       POSTGRES_USER: mgts
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mgts}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
     volumes:
       - pgdata:/var/lib/postgresql/data
+    networks: [backend]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U mgts -d mgts"]
       interval: 5s
@@ -17,8 +18,9 @@ services:
   api:
     build: ./backend
     environment:
-      APP_ENV: ${APP_ENV:-dev}
-      DATABASE_URL: postgresql+psycopg://mgts:${POSTGRES_PASSWORD:-mgts}@db:5432/mgts
+      # demo/pilot/production refuse to start without passwords and a webhook secret.
+      APP_ENV: ${APP_ENV:-demo}
+      DATABASE_URL: postgresql+psycopg://mgts:${POSTGRES_PASSWORD}@db:5432/mgts
       LLM_PROVIDER: ${LLM_PROVIDER:-mock}
       LLM_API_KEY: ${LLM_API_KEY:-}
       LLM_BASE_URL: ${LLM_BASE_URL:-https://api.deepseek.com/v1}
@@ -30,20 +32,24 @@ services:
       GIGACHAT_CA_BUNDLE: ${GIGACHAT_CA_BUNDLE:-}
       LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-40}
       LLM_MAX_RETRIES: ${LLM_MAX_RETRIES:-2}
-      WEBHOOK_SECRET: ${WEBHOOK_SECRET:-}
+      LLM_ALLOW_CROSS_BORDER: ${LLM_ALLOW_CROSS_BORDER:-false}
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET:?Set WEBHOOK_SECRET in .env (openssl rand -hex 24)}
       YANDEX_FORMS_FIELDS: ${YANDEX_FORMS_FIELDS:-}
-      DASHBOARD_USER: ${DASHBOARD_USER:-}
-      DASHBOARD_PASSWORD: ${DASHBOARD_PASSWORD:-}
+      WEBHOOK_UNKNOWN_INTERNS: ${WEBHOOK_UNKNOWN_INTERNS:-}
+      DASHBOARD_USER: ${DASHBOARD_USER:?Set DASHBOARD_USER in .env}
+      DASHBOARD_PASSWORD: ${DASHBOARD_PASSWORD:?Set DASHBOARD_PASSWORD in .env}
       DASHBOARD_VIEWER_USER: ${DASHBOARD_VIEWER_USER:-}
       DASHBOARD_VIEWER_PASSWORD: ${DASHBOARD_VIEWER_PASSWORD:-}
       SEED_ON_STARTUP: ${SEED_ON_STARTUP:-false}
       SEED_ANALYZE: ${SEED_ANALYZE:-false}
-      ANALYZE_IN_BACKGROUND: ${ANALYZE_IN_BACKGROUND:-true}
+      # The worker is the single consumer of the analysis queue.
+      ANALYZE_IN_BACKGROUND: ${ANALYZE_IN_BACKGROUND:-false}
       DEMO_FEEDBACK_ENABLED: ${DEMO_FEEDBACK_ENABLED:-false}
       FRONTEND_DIR: /srv/frontend
       TZ: Europe/Moscow
     volumes:
       - ./frontend:/srv/frontend:ro
+    networks: [edge, backend]
     depends_on:
       db:
         condition: service_healthy
@@ -65,7 +71,7 @@ services:
     build: ./backend
     command: python -m app.worker
     environment:
-      DATABASE_URL: postgresql+psycopg://mgts:${POSTGRES_PASSWORD:-mgts}@db:5432/mgts
+      DATABASE_URL: postgresql+psycopg://mgts:${POSTGRES_PASSWORD}@db:5432/mgts
       LLM_PROVIDER: ${LLM_PROVIDER:-mock}
       LLM_API_KEY: ${LLM_API_KEY:-}
       LLM_BASE_URL: ${LLM_BASE_URL:-https://api.deepseek.com/v1}
@@ -78,13 +84,14 @@ services:
       LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-40}
       LLM_MAX_RETRIES: ${LLM_MAX_RETRIES:-2}
       TZ: Europe/Moscow
+    networks: [backend, egress]
     depends_on:
       api:
         condition: service_healthy
     restart: unless-stopped
 
   caddy:
-    image: caddy:2-alpine
+    image: caddy:2-alpine@sha256:003a97808e781aa9f7e75cc2f43d34d461099031faf5e20faefb9f61126836f0
     ports:
       - "80:80"
       - "443:443"
@@ -96,10 +103,19 @@ services:
       - ./frontend:/srv/frontend:ro
       - caddy_data:/data
       - caddy_config:/config
+    networks: [edge]
     depends_on:
       api:
         condition: service_started
     restart: unless-stopped
+
+networks:
+  # Caddy sees only the API; the database is not reachable from the edge.
+  edge: {}
+  backend:
+    internal: true
+  # Outbound access for the worker's LLM calls.
+  egress: {}
 
 volumes:
   pgdata:

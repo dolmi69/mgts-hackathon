@@ -308,6 +308,31 @@ select:focus-visible, .button:focus-visible {
 .interns-table tbody tr:last-child td { border-bottom: 0; }
 .interns-table tbody tr { transition: background 0.15s ease; }
 .interns-table tbody tr:hover { background: var(--surface-elevated); }
+.mentors-table { width: 100%; border-collapse: collapse; min-width: 760px; }
+.mentors-table th {
+  text-align: left;
+  padding: 12px 28px;
+  background: var(--surface-elevated);
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  color: var(--muted-soft);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.mentors-table td {
+  padding: 16px 28px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: middle;
+  font-size: 14px;
+}
+.mentors-table tbody tr:last-child td { border-bottom: 0; }
+.mentors-table tr.mentor-attention { background: var(--amber-bg); }
+.mentor-name:hover strong { color: var(--text); }
+.mentor-share { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.mentor-interns { margin-top: 8px; }
+.mentor-interns a.chip:hover { color: var(--accent); }
+.mentor-note { white-space: normal; text-align: left; }
 .intern-link { display: inline-flex; align-items: center; gap: 12px; color: var(--text); min-width: 190px; }
 .intern-link:hover { color: var(--text); }
 .intern-link:hover strong { color: var(--accent); }
@@ -655,6 +680,36 @@ select:focus-visible, .button:focus-visible {
     font-weight: 500;
     margin-right: 4px;
   }
+  .mentors-table { display: block; min-width: 0; }
+  .mentors-table thead { display: none; }
+  .mentors-table tbody { display: block; }
+  .mentors-table tr {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    align-items: center;
+    padding: 16px 20px;
+    border-top: 1px solid var(--line);
+  }
+  .mentors-table td { display: block; padding: 0; border: 0; }
+  .mentors-table td:nth-child(1) { grid-column: 1 / -1; grid-row: 1; }
+  .mentors-table td:nth-child(2) { grid-column: 1 / -1; grid-row: 2; margin-top: 9px; }
+  .mentors-table td:nth-child(3) {
+    grid-column: 1;
+    grid-row: 3;
+    margin-top: 9px;
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .mentors-table td:nth-child(3)::before { content: "Заполнил анкет: "; color: var(--muted-soft); }
+  .mentors-table td:nth-child(4) { grid-column: 2; grid-row: 3; justify-self: end; margin-top: 9px; }
+  .mentors-table td:nth-child(4)::before {
+    content: "Оценка ";
+    color: var(--muted-soft);
+    font-size: 12px;
+    font-weight: 500;
+    margin-right: 3px;
+  }
+  .mentors-table td:nth-child(5) { grid-column: 1 / -1; grid-row: 4; margin-top: 9px; }
   .profile-head { padding: 20px; border-radius: 22px; }
   .profile-title { gap: 14px; }
   .profile-title h1 { font-size: 30px; }

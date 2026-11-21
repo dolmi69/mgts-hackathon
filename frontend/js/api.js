@@ -122,6 +122,7 @@ export const TOPIC_LABELS = {
   team: "команда",
   process: "процессы",
   growth: "развитие",
+  leave: "намерение уйти",
   other: "другое",
 };
 
@@ -145,6 +146,7 @@ export const RULE_LABELS = {
   R4: "пропуск опроса",
   R5: "повтор проблемы",
   R6: "низкая оценка",
+  R7: "намерение уйти",
 };
 
 export function topicLabel(topic) {

@@ -15,6 +15,7 @@ from ..utils import (
     add_months,
     format_period,
     format_period_short,
+    month_index,
     severity_rank,
     truncate,
 )
@@ -28,6 +29,8 @@ DEFAULT_RULES: dict[str, Any] = {
     "r4": {"grace_days": 3},
     "r5": {"min_repeats": 2, "window": 3},
     "r6": {"low_score": 2.0, "enabled": True},
+    "r7": {"enabled": True},
+    "mentors": {"attention_share": 0.75, "min_interns": 2},
 }
 
 TOPIC_LABELS = {
@@ -37,6 +40,7 @@ TOPIC_LABELS = {
     "team": "команда",
     "process": "процессы",
     "growth": "развитие",
+    "leave": "намерение уйти",
     "other": "другое",
 }
 
@@ -78,10 +82,11 @@ def _analysis(answer: Answer):
 
 
 def _quote(answer: Answer) -> str:
+    # Explanations close the quote with their own period: «…выходе».
     analysis = _analysis(answer)
     if analysis is not None and analysis.evidence:
-        return truncate(analysis.evidence[0], 180)
-    return truncate(answer.comment, 180) or "комментарий пуст"
+        return truncate(analysis.evidence[0], 180).rstrip(" .")
+    return truncate(answer.comment, 180).rstrip(" .") or "комментарий пуст"
 
 
 def _opposite_sentiment(first: Answer, second: Answer) -> bool:
@@ -201,21 +206,25 @@ def evaluate_intern(
         ]
         if len(series) < 3:
             continue
-        window = series[-6:]
+        # Six calendar months up to the latest answer: a gap in the surveys
+        # must stretch the time axis, not compress three answers from
+        # October, February and June into three "consecutive" months.
+        window_start = add_months(series[-1].period, -5)
+        window = [item for item in series if item.period >= window_start]
+        if len(window) < 3:
+            continue
         scores = [float(item.overall_score) for item in window]
+        months = [float(month_index(window[0].period, item.period)) for item in window]
         total_drop = scores[0] - scores[-1]
         drops = sum(
             1 for index in range(1, len(scores)) if scores[index] < scores[index - 1]
         )
         count = len(scores)
-        mean_x = (count - 1) / 2
+        mean_x = sum(months) / count
         mean_y = sum(scores) / count
-        denominator = sum((index - mean_x) ** 2 for index in range(count))
+        denominator = sum((x - mean_x) ** 2 for x in months)
         slope = (
-            sum(
-                (index - mean_x) * (score - mean_y)
-                for index, score in enumerate(scores)
-            )
+            sum((x - mean_x) * (score - mean_y) for x, score in zip(months, scores))
             / denominator
             if denominator
             else 0.0
@@ -330,6 +339,29 @@ def evaluate_intern(
                     "Низкая оценка месяца",
                     f"{who} поставил оценку {_fmt_score(answer.overall_score)} "
                     f"за {format_period(period)}.",
+                    [answer.id],
+                )
+
+    # R7: an explicit intent to leave (topic «leave» in a comment). An intern
+    # saying it, or a mentor reporting it, is the strongest retention signal.
+    if cfg["r7"].get("enabled", True):
+        for period in periods:
+            for respondent_type, who in (
+                ("intern", "Стажёр пишет"),
+                ("mentor", "Наставник пишет"),
+            ):
+                answer = by_period[period].get(respondent_type)
+                if answer is None:
+                    continue
+                analysis = _analysis(answer)
+                if analysis is None or "leave" not in (analysis.problem_topics or []):
+                    continue
+                add_flag(
+                    period,
+                    "R7",
+                    "high",
+                    "Стажёр говорит о намерении уйти",
+                    f"{who} о намерении уйти за {format_period(period)}: «{_quote(answer)}».",
                     [answer.id],
                 )
 

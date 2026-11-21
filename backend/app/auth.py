@@ -1,33 +1,113 @@
 from __future__ import annotations
 
 import secrets
+from datetime import datetime, timedelta, timezone
+from urllib.parse import urlsplit
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
+from sqlalchemy import delete, func, select
 
 from .config import settings
+from .database import SessionLocal
+from .models import AuthFailure
 
 basic_security = HTTPBasic(auto_error=False)
 
+# Environments where the dashboard may run without a password, and only for
+# requests from this machine. Anything else (including typos) fails closed.
+OPEN_ENVIRONMENTS = {"dev"}
+STRICT_ENVIRONMENTS = {"pilot", "production", "prod"}
+LOCAL_CLIENTS = {"127.0.0.1", "::1", "localhost", "testclient"}
+MIN_PASSWORD_LENGTH = 12
+MIN_SECRET_LENGTH = 16
+KNOWN_WEAK_SECRETS = {"change-me", "changeme", "secret", "password"}
+RUSSIAN_LLM_HOSTS = ("giga.chat", "sberbank.ru", "yandex.net", "yandexcloud.net", "yandex.ru")
+
+
+def app_env() -> str:
+    return (settings.app_env or "").strip().lower()
+
+
+# --- brute-force protection ------------------------------------------------------
+# Failures live in the database: every API process sees them and a restart
+# does not reset an attacker's counter.
+
+
+def _client_host(request: Request | None) -> str:
+    if request is None or request.client is None:
+        return "unknown"
+    return request.client.host[:64]
+
+
+def _window_start() -> datetime:
+    return datetime.now(timezone.utc) - timedelta(seconds=settings.auth_failure_window_seconds)
+
+
+def _too_many_failures(host: str) -> bool:
+    with SessionLocal() as db:
+        count = db.scalar(
+            select(func.count(AuthFailure.id)).where(
+                AuthFailure.client == host, AuthFailure.created_at > _window_start()
+            )
+        )
+    return int(count or 0) >= settings.auth_max_failures
+
+
+def _record_failure(host: str) -> None:
+    with SessionLocal() as db:
+        db.add(AuthFailure(client=host))
+        # Keep the table small: old attempts no longer matter.
+        db.execute(delete(AuthFailure).where(AuthFailure.created_at <= _window_start()))
+        db.commit()
+
+
+def reset_auth_failures() -> None:
+    with SessionLocal() as db:
+        db.execute(delete(AuthFailure))
+        db.commit()
+
+
+# --- dashboard -------------------------------------------------------------------
+
 
 def require_dashboard_auth(
+    request: Request,
     credentials: HTTPBasicCredentials | None = Depends(basic_security),
 ) -> str | None:
-    """Return the configured dashboard account, or None in local demo mode."""
+    """Return the dashboard account, or None for the local dev mode."""
     if not _login_required():
+        _require_local_dev(request)
         return None
-    if credentials is None:
-        raise _unauthorized()
-    for username, password in (
-        (settings.dashboard_user, settings.dashboard_password),
-        (settings.dashboard_viewer_user, settings.dashboard_viewer_password),
-    ):
-        if username and password:
-            user_ok = _matches(credentials.username, username)
-            password_ok = _matches(credentials.password, password)
-            if user_ok and password_ok:
-                return username
+    host = _client_host(request)
+    if _too_many_failures(host):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Слишком много неудачных попыток входа. Повторите позже.",
+            headers={"Retry-After": str(settings.auth_failure_window_seconds)},
+        )
+    if credentials is not None:
+        for username, password in (
+            (settings.dashboard_user, settings.dashboard_password),
+            (settings.dashboard_viewer_user, settings.dashboard_viewer_password),
+        ):
+            if username and password:
+                user_ok = _matches(credentials.username, username)
+                password_ok = _matches(credentials.password, password)
+                if user_ok and password_ok:
+                    return username
+        _record_failure(host)
     raise _unauthorized()
+
+
+def _require_local_dev(request: Request | None) -> None:
+    """Without a password the dashboard is only reachable from this machine."""
+    if app_env() in OPEN_ENVIRONMENTS and _client_host(request) in LOCAL_CLIENTS:
+        return
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Доступ по сети закрыт: задайте DASHBOARD_USER и DASHBOARD_PASSWORD.",
+    )
 
 
 def _login_required() -> bool:
@@ -52,6 +132,21 @@ def require_dashboard_write(
     return actor or "local-hr"
 
 
+# --- startup checks --------------------------------------------------------------
+
+
+def _weak_secret(value: str | None) -> bool:
+    return not value or value.strip().lower() in KNOWN_WEAK_SECRETS or len(value) < MIN_SECRET_LENGTH
+
+
+def _llm_is_cross_border() -> bool:
+    provider = (settings.llm_provider or "mock").strip().lower()
+    if provider in {"mock", "yandex", "yandexgpt", "gigachat"}:
+        return False
+    host = (urlsplit(settings.llm_base_url).hostname or "").lower()
+    return not (host.endswith(".ru") or any(host == item or host.endswith("." + item) for item in RUSSIAN_LLM_HOSTS))
+
+
 def validate_deployment_auth() -> None:
     hr_pair = bool(settings.dashboard_user), bool(settings.dashboard_password)
     viewer_pair = bool(settings.dashboard_viewer_user), bool(settings.dashboard_viewer_password)
@@ -61,11 +156,27 @@ def validate_deployment_auth() -> None:
         raise RuntimeError("Set both DASHBOARD_VIEWER_USER and DASHBOARD_VIEWER_PASSWORD")
     if viewer_pair[0] and settings.dashboard_viewer_user == settings.dashboard_user:
         raise RuntimeError("HR and read-only dashboard usernames must differ")
-    if settings.app_env.strip().lower() in {"pilot", "production"}:
-        if not all(hr_pair) or not settings.webhook_secret or settings.webhook_secret == "change-me":
-            raise RuntimeError("Set an HR login, password and unique webhook secret for the pilot")
+
+    env = app_env()
+    if env in OPEN_ENVIRONMENTS:
+        return
+    # Every other environment (demo, pilot, production, typos) is network-facing.
+    if not all(hr_pair) or _weak_secret(settings.webhook_secret):
+        raise RuntimeError(
+            f"APP_ENV={env or '<empty>'}: set an HR login, password and unique webhook secret "
+            f"(at least {MIN_SECRET_LENGTH} characters), or use APP_ENV=dev on localhost"
+        )
+    for password in (settings.dashboard_password, settings.dashboard_viewer_password):
+        if password and len(password) < MIN_PASSWORD_LENGTH:
+            raise RuntimeError(f"Dashboard passwords must be at least {MIN_PASSWORD_LENGTH} characters")
+    if env in STRICT_ENVIRONMENTS:
         if settings.demo_feedback_enabled or settings.seed_on_startup:
             raise RuntimeError("Use a separate demo environment for feedback and seed data")
+        if _llm_is_cross_border() and not settings.llm_allow_cross_border:
+            raise RuntimeError(
+                "LLM_BASE_URL sends personal data abroad. Use gigachat/yandex, or set "
+                "LLM_ALLOW_CROSS_BORDER=true after notifying Roskomnadzor (152-FZ art. 12)"
+            )
 
 
 def _unauthorized() -> HTTPException:
@@ -76,9 +187,13 @@ def _unauthorized() -> HTTPException:
     )
 
 
-def check_webhook_secret(secret_from_query: str | None, secret_from_header: str | None) -> None:
+# --- webhooks --------------------------------------------------------------------
+
+
+def check_webhook_secret(request: Request, secret_from_header: str | None) -> None:
+    """Accept the secret only in a header: query strings end up in access logs."""
     if not settings.webhook_secret:
+        _require_local_dev(request)
         return
-    supplied = secret_from_header or secret_from_query
-    if not supplied or not _matches(supplied, settings.webhook_secret):
+    if not secret_from_header or not _matches(secret_from_header, settings.webhook_secret):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Bad webhook secret")

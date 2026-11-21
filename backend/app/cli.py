@@ -86,7 +86,8 @@ def build_parser() -> argparse.ArgumentParser:
     reset_parser = sub.add_parser("reset", help="Удалить все данные")
     reset_parser.add_argument("--seed", action="store_true", help="Сразу загрузить демо-данные")
     reset_parser.add_argument("--no-analyze", action="store_true")
-    reset_parser.set_defaults(func=cmd_reset)
+    # The database is already empty when cmd_seed runs; nothing more to reset.
+    reset_parser.set_defaults(func=cmd_reset, reset=False)
 
     export_parser = sub.add_parser("export", help="Перегенерировать демо-CSV")
     export_parser.set_defaults(func=cmd_export)

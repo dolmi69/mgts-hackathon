@@ -1,10 +1,30 @@
-fastapi>=0.116
-uvicorn>=0.35
-sqlalchemy>=2.0.36
-psycopg[binary]>=3.2.3
-pydantic>=2.10
-pydantic-settings>=2.7
-httpx>=0.28
-certifi
-python-multipart>=0.0.20
-pytest>=8.3
+# Runtime dependencies, pinned to the versions the test suite runs on.
+# Update deliberately: bump, run `pytest` and `pip-audit -r requirements.txt`.
+fastapi==0.165.0
+starlette==1.10.0
+uvicorn==0.54.0
+SQLAlchemy==2.1.9
+psycopg[binary]==3.3.9
+pydantic==2.14.4
+pydantic-settings==2.16.3
+httpx==0.28.1
+certifi==2026.11.20
+python-multipart==0.0.34
+# Optional NER for names outside the roster (app/services/anonymize.py).
+# Pure-Python wheels plus numpy; models ship inside the natasha wheel
+# (no download at runtime). Adds ~135 MB to the image (numpy ~65 MB, models
+# ~36 MB), ~1 s and ~190 MB RAM at first use, ~3-15 ms per comment.
+# Turn off with ANONYMIZER_NER=false.
+natasha==1.6.0
+razdel==0.5.0
+navec==0.10.0
+slovnet==0.6.0
+yargy==0.16.0
+pymorphy2==0.9.1
+pymorphy2-dicts-ru==2.4.417127.4579844
+DAWG-Python==0.7.2
+docopt==0.6.2
+ipymarkup==0.9.0
+intervaltree==3.2.1
+sortedcontainers==2.4.0
+numpy==2.5.5

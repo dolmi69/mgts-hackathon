@@ -101,6 +101,30 @@
       <div id="interns-empty" class="empty" hidden>За этот месяц ответов нет.</div>
     </section>
 
+    <section class="card table-card">
+      <header class="card-head table-head">
+        <div>
+          <h2>Наставники</h2>
+          <p class="muted">Сигналы стажёров за месяц, сгруппированные по наставнику. Если сигнал есть у большинства его стажёров — это повод обсудить нагрузку и поддержку наставника, а не оценка его работы.</p>
+        </div>
+      </header>
+      <div class="table-scroll">
+        <table class="mentors-table">
+          <thead>
+            <tr>
+              <th>Наставник</th>
+              <th>Стажёры с сигналами</th>
+              <th>Заполнил анкет</th>
+              <th>Оценка стажёров</th>
+              <th>Что сделать</th>
+            </tr>
+          </thead>
+          <tbody id="mentors-body"></tbody>
+        </table>
+      </div>
+      <div id="mentors-empty" class="empty" hidden>За этот месяц нет стажёров с назначенным наставником.</div>
+    </section>
+
     <p class="footnote">
       Флажок — это не решение о человеке, а повод посмотреть исходный ответ.
       ИИ размечает только комментарии; правила риска считаются по оценкам, тексту и пропускам.

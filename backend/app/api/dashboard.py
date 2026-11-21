@@ -21,6 +21,7 @@ from ..schemas import (
     InternStats,
     InternSummary,
     KpiOut,
+    MentorSummary,
     PeriodOut,
     SeriesPoint,
     SurveyCalendar,
@@ -113,6 +114,7 @@ def dashboard_summary(
     db: Session = Depends(get_db),
 ) -> DashboardSummary:
     selected = _selected_period(db, period)
+    config = load_rules_config()
     answers = list(
         db.scalars(
             select(Answer)
@@ -140,7 +142,7 @@ def dashboard_summary(
     for answer in by_slot.values():
         by_period[answer.period].append(answer)
         observed[answer.intern_id].add(answer.period)
-    enrollment = _enrollment_periods(interns, observed, int(load_rules_config()["program_months"]))
+    enrollment = _enrollment_periods(interns, observed, int(config["program_months"]))
     eligible = [intern for intern in interns if selected in enrollment[intern.id]]
     as_of = max(by_period, default=selected)
     period_answers = by_period.get(selected, [])
@@ -201,6 +203,10 @@ def dashboard_summary(
             )
         )
 
+    mentors = _mentor_summaries(
+        eligible, flags_by_intern, by_slot, selected, config.get("mentors", {})
+    )
+
     summaries.sort(
         key=lambda item: (
             min((severity_rank(flag.severity) for flag in item.flags), default=3),
@@ -256,7 +262,65 @@ def dashboard_summary(
         dynamics=dynamics,
         top_topics=top_topics,
         interns=summaries,
+        mentors=mentors,
     )
+
+
+def _mentor_summaries(
+    eligible: list[Intern],
+    flags_by_intern: dict[int, list[RiskFlag]],
+    by_slot: dict,
+    selected: date,
+    rules: dict,
+) -> list[MentorSummary]:
+    """Aggregate the month's signals per mentor.
+
+    A high share of interns with signals is a reason to talk about the
+    mentor's workload and support, not a verdict about the mentor.
+    """
+    attention_share = float(rules.get("attention_share", 0.75))
+    min_interns = int(rules.get("min_interns", 2))
+    groups: dict[int, list[Intern]] = defaultdict(list)
+    for intern in eligible:
+        if intern.mentor is not None:
+            groups[intern.mentor.id].append(intern)
+
+    result: list[MentorSummary] = []
+    for group in groups.values():
+        mentor = group[0].mentor
+        flagged = [intern.id for intern in group if flags_by_intern.get(intern.id)]
+        with_high = sum(
+            1
+            for intern in group
+            if any(flag.severity == "high" for flag in flags_by_intern.get(intern.id, []))
+        )
+        responded = sum(
+            1 for intern in group if (intern.id, selected, "mentor") in by_slot
+        )
+        scores = [
+            by_slot[key].overall_score
+            for key in ((intern.id, selected, "intern") for intern in group)
+            if key in by_slot
+        ]
+        share = len(flagged) / len(group)
+        result.append(
+            MentorSummary(
+                id=mentor.id,
+                name=mentor.name,
+                interns_total=len(group),
+                interns_with_flags=len(flagged),
+                interns_with_high=with_high,
+                share_with_flags=share,
+                mentor_responded=responded,
+                avg_intern_score=mean(scores) if scores else None,
+                flagged_intern_ids=sorted(flagged),
+                needs_attention=len(group) >= min_interns and share >= attention_share,
+            )
+        )
+    result.sort(
+        key=lambda item: (-item.share_with_flags, -item.interns_with_high, item.name)
+    )
+    return result
 
 
 def _direction(intern: Intern) -> str:

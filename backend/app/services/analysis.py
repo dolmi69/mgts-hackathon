@@ -14,7 +14,7 @@ from ..prompts import PROMPT_VERSION
 from ..schemas import AIResult
 from ..utils import month_index
 from .anonymize import redact_pii
-from .llm import BaseProvider, LLMError, ProviderResult, get_provider, provider_model_name
+from .llm import BaseProvider, LLMError, MockProvider, ProviderResult, get_provider, is_valid_quote, provider_model_name
 from .rules import recompute_flags, replace_demo_flags
 
 logger = logging.getLogger(__name__)
@@ -25,9 +25,12 @@ ANALYSIS_INTERRUPTED = "Анализ был прерван несколько р
 
 
 def all_people_names(db: Session) -> list[str]:
-    names = db.scalars(select(Intern.name)).all()
-    names += db.scalars(select(Mentor.name)).all()
-    return [name for name in names if name]
+    # A person created from a webhook gets their ID as a name (``int-003``,
+    # or anything a sender typed). Such placeholders are not names and must
+    # not turn ordinary words into [ИМЯ].
+    rows = list(db.execute(select(Intern.name, Intern.external_id)))
+    rows += list(db.execute(select(Mentor.name, Mentor.external_id)))
+    return [name for name, external_id in rows if name and name != external_id]
 
 
 def _lock_answer(db: Session, answer_id: int) -> Answer | None:
@@ -129,7 +132,8 @@ def _request_result(
     answer = db.get(Answer, answer_id)
     if answer is None:
         return None
-    comment = redact_pii(answer.comment or "", all_people_names(db))
+    original = answer.comment or ""
+    comment = redact_pii(original, all_people_names(db))
     role = answer.respondent_type
     start = answer.intern.start_period
     month = month_index(start, answer.period) + 1 if start else None
@@ -142,7 +146,39 @@ def _request_result(
             model="none",
             prompt_version="n/a",
         )
-    return (provider or get_provider()).analyze(comment, role, month_index=month)
+    active = provider or get_provider()
+    result = active.analyze(comment, role, month_index=month)
+    if not isinstance(active, MockProvider):
+        _guard_remote_result(result, answer_comment=original)
+    return result
+
+
+# Phrases that must never end up as "positive, no problems", whatever the model
+# was talked into by the comment itself (prompt injection) or got wrong.
+STRONG_NEGATIVE_MARKERS = (
+    "уволит", "увольн", "уйти из", "уйду", "ухожу", "думаю о выходе", "выгор",
+    "не нравит", "ненавиж", "невыносим", "ужасн", "кошмар", "унижа", " орет", " орёт",
+    "токсич", "не справляюсь", "не хочу работать", "депресс",
+)
+
+
+def _guard_remote_result(result: ProviderResult, *, answer_comment: str) -> None:
+    """Deterministic checks on top of a remote model's answer.
+
+    1. Quotes are checked against the original comment that HR sees, not the
+       redacted copy sent to the model.
+    2. An explicit complaint cannot be relabelled as positive or neutral.
+    """
+    data = result.result
+    data.evidence = [quote for quote in data.evidence if is_valid_quote(quote, answer_comment)]
+    folded = " " + answer_comment.lower()
+    hits = [marker for marker in STRONG_NEGATIVE_MARKERS if marker in folded]
+    if hits and data.sentiment in {"positive", "neutral"}:
+        data.sentiment = "mixed"
+        data.confidence = min(data.confidence, 0.4)
+        result.raw = {**(result.raw or {}), "guard": {"negative_markers": hits}}
+    if data.sentiment in {"negative", "mixed"} and not data.evidence:
+        data.confidence = min(data.confidence, 0.35)
 
 
 def _finish_claim(

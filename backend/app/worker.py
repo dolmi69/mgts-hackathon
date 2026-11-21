@@ -18,6 +18,10 @@ logger = logging.getLogger("worker")
 
 def main() -> None:
     init_db()
+    # Load the NER model once at startup, not on the first survey comment.
+    from .services.anonymize import ner_available
+
+    ner_available()
     logger.info("Worker started, provider=%s", settings.llm_provider)
     last_calendar_refresh = None
     while True:

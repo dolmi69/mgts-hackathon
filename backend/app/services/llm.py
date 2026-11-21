@@ -101,6 +101,30 @@ TOPIC_KEYWORDS: dict[str, tuple[str, ...]] = {
         "онбординг",
     ),
     "growth": ("рост", "развит", "обучен", "карьер", "навык", "опыт"),
+    # Intent to leave. Matched by _has_leave_intent() with a negation check,
+    # never by plain substring search in _mock_topics().
+    "leave": (
+        "о выходе",
+        "об уходе",
+        "об увольнении",
+        "уйти",
+        "уходить",
+        "ухожу",
+        "уйду",
+        "уволиться",
+        "увольняться",
+        "уволюсь",
+        "увольняюсь",
+        "другую работу",
+        "новую работу",
+        "другое место",
+        "получил оффер",
+        "получила оффер",
+        "получил предложение",
+        "получила предложение",
+        "оффер в друг",
+        "есть оффер",
+    ),
 }
 
 TOPIC_LABELS = {
@@ -110,6 +134,7 @@ TOPIC_LABELS = {
     "team": "команда",
     "process": "процессы",
     "growth": "развитие",
+    "leave": "намерение уйти",
     "other": "другое",
 }
 
@@ -176,10 +201,38 @@ def _sentences(text: str) -> list[str]:
     return parts or ([text.strip()] if text.strip() else [])
 
 
+NEGATION_WORDS = frozenset({"не", "ни", "нет", "никуда", "незачем", "никогда"})
+CLAUSE_RE = re.compile(r"[.,;:!?()]|\s(?:но|а|однако|хотя)\s|\s[-—–]\s")
+WORD_RE = re.compile(r"[а-яёa-z]+")
+LEAVE_NOT_QUITTING = ("отпуск", "больничн", "обед", "домой", "пораньше", "раньше")
+
+
+def _leave_negated(clause: str, start: int, end: int) -> bool:
+    """«Не думаю уходить», «уходить не собираюсь», «никуда не уйду»."""
+    before = WORD_RE.findall(clause[:start])[-2:]
+    after = WORD_RE.findall(clause[end:])[:2]
+    if any(word.startswith(LEAVE_NOT_QUITTING) for word in after):
+        return True  # «ухожу в отпуск» is not quitting
+    return any(word in NEGATION_WORDS for word in before + after)
+
+
+def _has_leave_intent(text: str) -> bool:
+    for clause in CLAUSE_RE.split(text.lower()):
+        for keyword in TOPIC_KEYWORDS["leave"]:
+            start = clause.find(keyword)
+            while start != -1:
+                if not _leave_negated(clause, start, start + len(keyword)):
+                    return True
+                start = clause.find(keyword, start + 1)
+    return False
+
+
 def _mock_topics(text: str) -> list[str]:
     low = text.lower()
     found: list[str] = []
     for topic, keywords in TOPIC_KEYWORDS.items():
+        if topic == "leave":
+            continue
         if any(keyword in low for keyword in keywords):
             found.append(topic)
     return found
@@ -236,6 +289,16 @@ class MockProvider(BaseProvider):
 
         topics = _mock_topics(text)
         problem_topics = _mock_problem_topics(text, topics)
+        leave = _has_leave_intent(text)
+        if leave:
+            # An intent to leave is a problem even without complaint words.
+            problem_topics = [topic for topic in problem_topics if topic != "other"]
+            problem_topics.append("leave")
+            topics.append("leave")
+            if sentiment == "positive":
+                sentiment = "mixed"
+            elif sentiment == "neutral":
+                sentiment = "negative"
         if problem_topics and "other" in problem_topics and "other" not in topics:
             topics.append("other")
 
@@ -252,6 +315,9 @@ class MockProvider(BaseProvider):
                 for sentence in evidence_source
                 if _contains_any(sentence, POSITIVE_MARKERS)
             ]
+        if leave:
+            leave_evidence = [s for s in evidence_source if _has_leave_intent(s)]
+            evidence = leave_evidence + [s for s in evidence if s not in leave_evidence]
         if not evidence and evidence_source:
             evidence = [evidence_source[0]]
         evidence = evidence[:3]
@@ -282,7 +348,7 @@ class MockProvider(BaseProvider):
             problem_topics=problem_topics,
             summary=summary,
             evidence=evidence,
-            confidence=0.75 if (negative or positive) else 0.45,
+            confidence=0.75 if (negative or positive or leave) else 0.45,
         )
         return ProviderResult(result=result, raw=result.model_dump(), model="mock")
 
@@ -313,9 +379,31 @@ def _extract_json(text: str) -> dict[str, Any]:
     return parsed
 
 
+MIN_QUOTE_CHARS = 8
+
+
+def is_valid_quote(quote: str, comment: str) -> bool:
+    """A quote must be a real, whole-word fragment of the comment.
+
+    «я» or «нравится» cut out of «не нравится» are not evidence.
+    """
+    quote = (quote or "").strip()
+    if not quote or len(quote) < min(MIN_QUOTE_CHARS, len(comment.strip())):
+        return False
+    for match in re.finditer(re.escape(quote), comment):
+        start, end = match.span()
+        if (start and comment[start - 1].isalnum()) or (end < len(comment) and comment[end].isalnum()):
+            continue
+        before = comment[:start].rstrip().lower()
+        if before.endswith((" не", " ни")) or before in {"не", "ни"}:
+            continue  # the quote drops a negation
+        return True
+    return False
+
+
 def _validate_result(result: AIResult, comment: str) -> AIResult:
     # Evidence must be an exact substring; never show invented quotes.
-    result.evidence = [item for item in result.evidence if item and item in comment][:3]
+    result.evidence = [item for item in result.evidence if is_valid_quote(item, comment)][:3]
     result.topics = [item for item in result.topics if item][:8]
     result.problem_topics = [item for item in result.problem_topics if item in result.topics][:8]
     if result.sentiment in {"negative", "mixed"} and not result.evidence:
@@ -329,7 +417,7 @@ class _RemoteResult(BaseModel):
     sentiment: Sentiment
     topics: list[str]
     problem_topics: list[str]
-    summary: str = Field(min_length=1, max_length=1500)
+    summary: str = Field(min_length=1, max_length=600)
     evidence: list[str]
     confidence: float = Field(ge=0, le=1)
 
@@ -362,8 +450,10 @@ def _repair_prompt() -> str:
         "Предыдущий ответ не прошёл проверку. Верни только валидный JSON "
         "со всеми полями схемы, без markdown. evidence — точные подстроки комментария. "
         "Для жалобы нужна хотя бы одна подтверждающая цитата. Проверь оба списка тем: "
-        "workload, tasks, mentorship, team, process, growth, other — исчерпывающий список кодов. "
-        "В частности, доступы — process, поведение коллег — team, условия офиса — other."
+        "workload, tasks, mentorship, team, process, growth, leave, other — исчерпывающий список кодов. "
+        "В частности, доступы — process, поведение коллег — team, условия офиса — other, "
+        "явное намерение уйти, поиск другой работы или оффер в другом месте — leave "
+        "(обычная жалоба без намерения уйти — не leave)."
     )
 
 
@@ -396,7 +486,9 @@ class OpenAICompatibleProvider(BaseProvider):
         with httpx.Client(timeout=self.timeout) as client:
             response = client.post(f"{self.base_url}/chat/completions", headers=headers, json=payload)
             if response.status_code == 400 and json_mode:
-                # Some compatible providers reject response_format.
+                # Some compatible providers reject response_format. Remember it,
+                # so retries and repair rounds do not pay for the failing call again.
+                self._json_mode = False
                 return self._request(messages, json_mode=False)
             response.raise_for_status()
             return response.json()
@@ -541,6 +633,8 @@ class YandexGPTProvider(BaseProvider):
         headers = {
             "Authorization": f"Api-Key {settings.llm_api_key}",
             "Content-Type": "application/json",
+            # Ask Yandex Cloud not to keep request texts for model training.
+            "x-data-logging-enabled": "false",
         }
         with httpx.Client(timeout=settings.llm_timeout_seconds) as client:
             response = client.post(self.endpoint, headers=headers, json=payload)

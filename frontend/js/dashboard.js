@@ -31,6 +31,9 @@ function cacheElements() {
   els.body = document.getElementById("interns-body");
   els.table = document.querySelector(".interns-table");
   els.empty = document.getElementById("interns-empty");
+  els.mentorsBody = document.getElementById("mentors-body");
+  els.mentorsTable = document.querySelector(".mentors-table");
+  els.mentorsEmpty = document.getElementById("mentors-empty");
   els.topicsEmpty = document.getElementById("topics-empty");
   els.asOf = document.getElementById("as-of");
   els.demoFeedback = document.getElementById("demo-feedback-link");
@@ -248,21 +251,80 @@ function renderTable(summary) {
     .join("");
 }
 
+function renderMentors(summary) {
+  const mentors = summary.mentors || [];
+  if (!mentors.length) {
+    els.mentorsTable.hidden = true;
+    els.mentorsEmpty.hidden = false;
+    return;
+  }
+  els.mentorsTable.hidden = false;
+  els.mentorsEmpty.hidden = true;
+  const names = new Map((summary.interns || []).map((intern) => [intern.id, intern.name]));
+  els.mentorsBody.innerHTML = mentors
+    .map((mentor) => {
+      const share = Math.round((mentor.share_with_flags || 0) * 100);
+      const high = mentor.interns_with_high
+        ? `<span class="badge high">высоких: ${escapeHtml(mentor.interns_with_high)}</span>`
+        : "";
+      const flagged = (mentor.flagged_intern_ids || [])
+        .map(
+          (id) =>
+            `<a class="chip" href="intern.html?id=${encodeURIComponent(id)}">${escapeHtml(names.get(id) || `#${id}`)}</a>`
+        )
+        .join("");
+      const status = mentor.needs_attention
+        ? '<span class="badge medium mentor-note">Повод обсудить нагрузку и поддержку наставника</span>'
+        : '<span class="badge neutral">без особенностей</span>';
+      return `
+        <tr class="${mentor.needs_attention ? "mentor-attention" : ""}">
+          <td>
+            <span class="intern-link mentor-name">
+              <span class="avatar">${escapeHtml(initials(mentor.name))}</span>
+              <span>
+                <strong>${escapeHtml(mentor.name)}</strong>
+                <small>стажёров в месяце: ${escapeHtml(mentor.interns_total)}</small>
+              </span>
+            </span>
+          </td>
+          <td>
+            <div class="mentor-share">
+              <span class="score">${escapeHtml(mentor.interns_with_flags)} из ${escapeHtml(mentor.interns_total)}</span>
+              <span class="muted small">${share}%</span>
+              ${high}
+            </div>
+            ${flagged ? `<div class="chips mentor-interns">${flagged}</div>` : ""}
+          </td>
+          <td>${escapeHtml(mentor.mentor_responded)} из ${escapeHtml(mentor.interns_total)}</td>
+          <td><span class="score">${escapeHtml(formatAverage(mentor.avg_intern_score))}</span></td>
+          <td>${status}</td>
+        </tr>
+      `;
+    })
+    .join("");
+}
+
 function render(summary) {
   els.demoFeedback.hidden = !summary.demo_feedback_enabled;
   els.asOf.textContent = `Данные: ${formatPeriod(summary.as_of)}`;
   renderKpis(summary);
   renderCharts(summary);
   renderTable(summary);
+  renderMentors(summary);
 }
 
+let loadSeq = 0;
+
 async function load(period) {
+  // Ignore responses that arrive after the user picked another month.
+  const seq = ++loadSeq;
   hideError(els.error);
   els.refresh.disabled = true;
   els.refresh.textContent = "Загрузка…";
   try {
     const query = period ? `?period=${encodeURIComponent(period)}` : "";
     const summary = await apiGet(`/api/dashboard/summary${query}`);
+    if (seq !== loadSeq) return;
     state.summary = summary;
     state.selected = summary.period;
     render(summary);
@@ -270,10 +332,12 @@ async function load(period) {
     url.searchParams.set("period", summary.period);
     window.history.replaceState({}, "", url);
   } catch (error) {
-    showError(els.error, error.message);
+    if (seq === loadSeq) showError(els.error, error.message);
   } finally {
-    els.refresh.disabled = false;
-    els.refresh.textContent = "Обновить";
+    if (seq === loadSeq) {
+      els.refresh.disabled = false;
+      els.refresh.textContent = "Обновить";
+    }
   }
 }
 
@@ -291,6 +355,8 @@ async function init() {
       els.kpis.innerHTML = "";
       els.table.hidden = true;
       els.empty.hidden = false;
+      els.mentorsTable.hidden = true;
+      els.mentorsEmpty.hidden = false;
       return;
     }
     els.period.innerHTML = periods

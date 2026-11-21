@@ -7,6 +7,7 @@ import re
 from datetime import date
 from typing import Any
 
+from ..config import settings
 from ..schemas import CanonicalAnswer
 from ..utils import parse_period
 
@@ -114,6 +115,19 @@ def _auto_id(row: dict[str, str], period: str, respondent: str, intern: str) -> 
     return "csv-" + hashlib.sha1(payload.encode("utf-8")).hexdigest()[:20]
 
 
+def _rows(reader: csv.DictReader, errors: list[str]):
+    """Yield numbered rows; stop on malformed CSV or above the row limit."""
+    row_number = 1
+    try:
+        for row_number, raw_row in enumerate(reader, start=2):
+            if row_number - 1 > settings.max_import_rows:
+                errors.append(f"Файл длиннее {settings.max_import_rows} строк, остальные строки не загружены")
+                return
+            yield row_number, raw_row
+    except csv.Error:
+        errors.append(f"Строка {row_number + 1}: повреждённый CSV, импорт остановлен на этой строке")
+
+
 def parse_answers_csv(data: bytes) -> tuple[list[CanonicalAnswer], list[str]]:
     text = _decode(data)
     if not text.strip():
@@ -121,7 +135,7 @@ def parse_answers_csv(data: bytes) -> tuple[list[CanonicalAnswer], list[str]]:
     reader = csv.DictReader(io.StringIO(text), delimiter=_delimiter(text))
     answers: list[CanonicalAnswer] = []
     errors: list[str] = []
-    for row_number, raw_row in enumerate(reader, start=2):
+    for row_number, raw_row in _rows(reader, errors):
         try:
             row = {_normalize_header(key): value for key, value in raw_row.items() if key}
             period_raw = _pick(row, ANSWER_ALIASES["period"])
@@ -175,7 +189,7 @@ def parse_interns_csv(data: bytes) -> tuple[list[dict[str, Any]], list[str]]:
     reader = csv.DictReader(io.StringIO(text), delimiter=_delimiter(text))
     interns: list[dict[str, Any]] = []
     errors: list[str] = []
-    for row_number, raw_row in enumerate(reader, start=2):
+    for row_number, raw_row in _rows(reader, errors):
         try:
             row = {_normalize_header(key): value for key, value in raw_row.items() if key}
             external_id = _pick(row, INTERN_ALIASES["external_id"])
