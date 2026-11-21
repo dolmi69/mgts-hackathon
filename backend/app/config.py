@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import json
 from functools import lru_cache
 from pathlib import Path
+from typing import Annotated
 
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field, field_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 ROOT_DIR = BASE_DIR.parent
@@ -25,6 +28,7 @@ class Settings(BaseSettings):
     seed_analyze: bool = False
     analyze_in_background: bool = True
     demo_feedback_enabled: bool = False
+    yandex_forms_fields: Annotated[dict[str, dict[str, str]], NoDecode] = Field(default_factory=dict)
 
     llm_provider: str = "mock"  # mock | openai | yandex | gigachat
     llm_api_key: str | None = None
@@ -42,11 +46,20 @@ class Settings(BaseSettings):
     webhook_secret: str | None = None
     dashboard_user: str | None = None
     dashboard_password: str | None = None
+    dashboard_viewer_user: str | None = None
+    dashboard_viewer_password: str | None = None
 
     rules_path: Path = BASE_DIR / "config" / "rules.json"
     seed_dir: Path = BASE_DIR / "data" / "seed"
     frontend_dir: Path = ROOT_DIR / "frontend"
     worker_poll_seconds: float = 2.0
+
+    @field_validator("yandex_forms_fields", mode="before")
+    @classmethod
+    def parse_yandex_fields(cls, value: object) -> object:
+        if isinstance(value, str):
+            return json.loads(value.strip() or "{}")
+        return value
 
     model_config = SettingsConfigDict(
         env_file=ENV_FILE,

@@ -17,6 +17,7 @@ services:
   api:
     build: ./backend
     environment:
+      APP_ENV: ${APP_ENV:-dev}
       DATABASE_URL: postgresql+psycopg://mgts:${POSTGRES_PASSWORD:-mgts}@db:5432/mgts
       LLM_PROVIDER: ${LLM_PROVIDER:-mock}
       LLM_API_KEY: ${LLM_API_KEY:-}
@@ -30,9 +31,12 @@ services:
       LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-40}
       LLM_MAX_RETRIES: ${LLM_MAX_RETRIES:-2}
       WEBHOOK_SECRET: ${WEBHOOK_SECRET:-}
+      YANDEX_FORMS_FIELDS: ${YANDEX_FORMS_FIELDS:-}
       DASHBOARD_USER: ${DASHBOARD_USER:-}
       DASHBOARD_PASSWORD: ${DASHBOARD_PASSWORD:-}
-      SEED_ON_STARTUP: "true"
+      DASHBOARD_VIEWER_USER: ${DASHBOARD_VIEWER_USER:-}
+      DASHBOARD_VIEWER_PASSWORD: ${DASHBOARD_VIEWER_PASSWORD:-}
+      SEED_ON_STARTUP: ${SEED_ON_STARTUP:-false}
       SEED_ANALYZE: ${SEED_ANALYZE:-false}
       ANALYZE_IN_BACKGROUND: ${ANALYZE_IN_BACKGROUND:-true}
       DEMO_FEEDBACK_ENABLED: ${DEMO_FEEDBACK_ENABLED:-false}
@@ -75,7 +79,7 @@ services:
       LLM_MAX_RETRIES: ${LLM_MAX_RETRIES:-2}
       TZ: Europe/Moscow
     depends_on:
-      db:
+      api:
         condition: service_healthy
     restart: unless-stopped
 

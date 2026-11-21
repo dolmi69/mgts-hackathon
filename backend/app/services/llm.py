@@ -14,16 +14,19 @@ from uuid import uuid4
 
 import certifi
 import httpx
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from ..config import BASE_DIR, settings
 from ..prompts import PROMPT_VERSION, SYSTEM_PROMPT, build_user_prompt
-from ..schemas import AIResult
+from ..schemas import AIResult, Sentiment
 
 logger = logging.getLogger(__name__)
 
 
 class LLMError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, retryable: bool = False) -> None:
+        super().__init__(message)
+        self.retryable = retryable
 
 
 @dataclass
@@ -288,6 +291,8 @@ class MockProvider(BaseProvider):
 
 
 def _extract_json(text: str) -> dict[str, Any]:
+    if not isinstance(text, str):
+        raise LLMError("LLM response has no text content")
     raw = text.strip()
     if raw.startswith("```"):
         raw = re.sub(r"^```(?:json)?\s*", "", raw)
@@ -298,11 +303,11 @@ def _extract_json(text: str) -> dict[str, Any]:
         start = raw.find("{")
         end = raw.rfind("}")
         if start == -1 or end == -1 or end <= start:
-            raise LLMError(f"LLM did not return JSON: {raw[:300]}") from exc
+            raise LLMError("LLM did not return JSON") from exc
         try:
             parsed = json.loads(raw[start : end + 1])
         except json.JSONDecodeError as exc2:
-            raise LLMError(f"LLM returned invalid JSON: {raw[:300]}") from exc2
+            raise LLMError("LLM returned invalid JSON") from exc2
     if not isinstance(parsed, dict):
         raise LLMError("LLM returned JSON that is not an object")
     return parsed
@@ -318,10 +323,47 @@ def _validate_result(result: AIResult, comment: str) -> AIResult:
     return result
 
 
+class _RemoteResult(BaseModel):
+    model_config = ConfigDict(strict=True, str_strip_whitespace=True)
+
+    sentiment: Sentiment
+    topics: list[str]
+    problem_topics: list[str]
+    summary: str = Field(min_length=1, max_length=1500)
+    evidence: list[str]
+    confidence: float = Field(ge=0, le=1)
+
+
+def _parse_remote_result(text: str, comment: str) -> AIResult:
+    try:
+        validated = _RemoteResult.model_validate(_extract_json(text))
+    except ValidationError as exc:
+        raise LLMError("LLM response does not match the required schema") from exc
+    if set(validated.topics) - TOPIC_LABELS.keys():
+        raise LLMError("LLM response contains unknown topics")
+    if set(validated.problem_topics) - set(validated.topics):
+        raise LLMError("LLM response lists a problem absent from its topics")
+    result = _validate_result(AIResult.model_validate(validated.model_dump()), comment)
+    if (result.problem_topics or result.sentiment in {"mixed", "negative"}) and not result.evidence:
+        raise LLMError("LLM complaint has no matching quote")
+    return result
+
+
+def _temporary_error(exc: Exception) -> bool:
+    if isinstance(exc, LLMError):
+        return exc.retryable
+    if isinstance(exc, httpx.HTTPStatusError):
+        return exc.response.status_code == 429 or 500 <= exc.response.status_code < 600
+    return isinstance(exc, httpx.TransportError)
+
+
 def _repair_prompt() -> str:
     return (
         "Предыдущий ответ не прошёл проверку. Верни только валидный JSON "
-        "по заданной схеме, без markdown. evidence — точные подстроки комментария."
+        "со всеми полями схемы, без markdown. evidence — точные подстроки комментария. "
+        "Для жалобы нужна хотя бы одна подтверждающая цитата. Проверь оба списка тем: "
+        "workload, tasks, mentorship, team, process, growth, other — исчерпывающий список кодов. "
+        "В частности, доступы — process, поведение коллег — team, условия офиса — other."
     )
 
 
@@ -359,14 +401,12 @@ class OpenAICompatibleProvider(BaseProvider):
             response.raise_for_status()
             return response.json()
 
-    def _parse(self, body: dict[str, Any]) -> tuple[AIResult, str]:
+    def _parse(self, body: dict[str, Any], comment: str) -> tuple[AIResult, str]:
         try:
             content = body["choices"][0]["message"]["content"]
         except (KeyError, IndexError, TypeError) as exc:
-            raise LLMError(f"Unexpected LLM response: {body}") from exc
-        data = _extract_json(content)
-        result = AIResult.model_validate(data)
-        return result, content
+            raise LLMError("Unexpected LLM response") from exc
+        return _parse_remote_result(content, comment), content
 
     def analyze(
         self,
@@ -381,31 +421,27 @@ class OpenAICompatibleProvider(BaseProvider):
                 "content": build_user_prompt(comment, respondent_type, month_index),
             },
         ]
-        last_error: Exception | None = None
         for attempt in range(self.max_retries + 1):
             try:
                 body = self._request(messages, self._json_mode)
                 try:
-                    result, content = self._parse(body)
+                    result, content = self._parse(body, comment)
                 except LLMError:
-                    # A repair round. Some models wrap JSON in markdown.
-                    body = self._request(
-                        messages + [{"role": "user", "content": _repair_prompt()}],
-                        self._json_mode,
-                    )
-                    result, content = self._parse(body)
-                result = _validate_result(result, comment)
+                    repair = {"role": "user", "content": messages[-1]["content"] + "\n" + _repair_prompt()}
+                    body = self._request([messages[0], repair], self._json_mode)
+                    result, content = self._parse(body, comment)
                 return ProviderResult(
                     result=result,
                     raw={"content": content, "body": body},
-                    model=self.model,
+                    model=str(body.get("model") or self.model),
                 )
             except (httpx.HTTPError, LLMError, ValueError) as exc:
-                last_error = exc
-                if attempt < self.max_retries:
+                retryable = _temporary_error(exc)
+                if retryable and attempt < self.max_retries:
                     time.sleep(1.2 * (attempt + 1))
                     continue
-        raise LLMError(f"LLM request failed: {last_error}")
+                raise LLMError("LLM request or validation failed", retryable=retryable) from exc
+        raise AssertionError("The initial LLM attempt was skipped")
 
 
 class GigaChatProvider(OpenAICompatibleProvider):
@@ -465,6 +501,7 @@ class GigaChatProvider(OpenAICompatibleProvider):
                 with self._token_lock:
                     if self._access_token == token:
                         self._token_deadline = 0.0
+                raise LLMError("GigaChat rejected the access token", retryable=True)
             response.raise_for_status()
             return response.json()
 
@@ -523,27 +560,26 @@ class YandexGPTProvider(BaseProvider):
                 "content": build_user_prompt(comment, respondent_type, month_index),
             },
         ]
-        last_error: Exception | None = None
         for attempt in range(self.max_retries + 1):
             try:
                 body = self._request(messages, settings.llm_temperature)
                 try:
                     text = body["result"]["alternatives"][0]["message"]["text"]
                 except (KeyError, IndexError, TypeError) as exc:
-                    raise LLMError(f"Unexpected YandexGPT response: {body}") from exc
-                data = _extract_json(text)
-                result = _validate_result(AIResult.model_validate(data), comment)
+                    raise LLMError("Unexpected YandexGPT response") from exc
+                result = _parse_remote_result(text, comment)
                 return ProviderResult(
                     result=result,
                     raw={"content": text, "body": body},
                     model=self.model,
                 )
             except (httpx.HTTPError, LLMError, ValueError) as exc:
-                last_error = exc
-                if attempt < self.max_retries:
+                retryable = _temporary_error(exc)
+                if retryable and attempt < self.max_retries:
                     time.sleep(1.2 * (attempt + 1))
                     continue
-        raise LLMError(f"YandexGPT request failed: {last_error}")
+                raise LLMError("YandexGPT request or validation failed", retryable=retryable) from exc
+        raise AssertionError("The initial YandexGPT attempt was skipped")
 
 
 def get_provider() -> BaseProvider:

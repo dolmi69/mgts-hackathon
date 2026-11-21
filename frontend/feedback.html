@@ -25,14 +25,31 @@
     <section class="page-head">
       <div>
         <h1>Демо-анкета</h1>
-        <p class="lede">Оцените месяц стажировки и расскажите, как он прошёл.
-          Для демо используйте вымышленный отзыв без личных данных.</p>
+        <p class="lede">Отправьте вымышленные ответы стажёра и наставника в одну карточку.
+          Меняйте месяц, чтобы показать динамику.</p>
       </div>
     </section>
 
     <form class="card" id="feedback-form" method="post">
+      <div class="feedback-toolbar">
+        <span id="feedback-scenario">Новый сценарий</span>
+        <button class="button button-secondary" id="feedback-new" type="button" hidden>Новый сценарий</button>
+      </div>
       <fieldset class="feedback-fields">
         <legend>Как прошёл месяц?</legend>
+        <div class="feedback-pair">
+          <div>
+            <label for="feedback-role">Кто отвечает</label>
+            <select id="feedback-role" name="respondent_type">
+              <option value="intern">Стажёр</option>
+              <option value="mentor">Наставник</option>
+            </select>
+          </div>
+          <div>
+            <label for="feedback-period">Месяц</label>
+            <input id="feedback-period" name="period" type="month" required>
+          </div>
+        </div>
         <label for="feedback-score">Общая оценка</label>
         <select id="feedback-score" name="score" required>
           <option value="">Выберите от 1 до 5</option>
@@ -45,13 +62,17 @@
         <label for="feedback-comment">Комментарий</label>
         <textarea id="feedback-comment" name="comment" required maxlength="2000" rows="4"
           placeholder="Что получилось? С чем были трудности?"></textarea>
-        <button class="button" type="submit">Отправить анкету</button>
+        <div class="feedback-toolbar">
+          <button class="button" type="submit">Отправить анкету</button>
+          <button class="button button-secondary" id="feedback-example" type="button">Подставить пример</button>
+        </div>
       </fieldset>
 
       <div class="feedback-result">
         <p id="feedback-status" role="status"></p>
         <p id="feedback-error" role="alert" class="alert" hidden></p>
         <a id="feedback-card" hidden>Открыть карточку стажёра</a>
+        <a id="feedback-signals" hidden>Сигналы в очереди HR</a>
         <button class="button" id="feedback-check" type="button" hidden>Проверить статус</button>
       </div>
     </form>

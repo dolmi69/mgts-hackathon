@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f5f5f7">
+  <title>Входящие HR · МГТС</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="css/app.css">
+  <link rel="stylesheet" href="css/signals.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="container topbar-inner">
+      <a class="brand" href="index.html">
+        <span class="brand-mark">МГТС</span>
+        <span class="brand-copy"><strong>Сигналы по стажёрам</strong></span>
+      </a>
+      <nav class="topbar-meta" aria-label="Навигация">
+        <a href="index.html">К дашборду</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container page signals-page">
+    <header class="page-head">
+      <div>
+        <h1>Входящие HR</h1>
+        <p class="lede">Посмотрите причины сигналов, назначьте ответственного и зафиксируйте результат.</p>
+      </div>
+    </header>
+
+    <form class="card signals-filters" id="signal-filters" aria-label="Фильтры сигналов">
+      <label for="signal-state">Статус
+        <select id="signal-state" name="state">
+          <option value="">Все статусы</option>
+          <option value="new">Новые</option>
+          <option value="in_progress">В работе</option>
+          <option value="reviewed">Разобраны</option>
+        </select>
+      </label>
+      <label for="signal-severity">Уровень
+        <select id="signal-severity" name="severity">
+          <option value="">Все уровни</option>
+          <option value="high">Высокий</option>
+          <option value="medium">Средний</option>
+          <option value="low">Наблюдение</option>
+        </select>
+      </label>
+      <label for="signal-period">Месяц
+        <input id="signal-period" name="period" type="month">
+      </label>
+      <label for="signal-scope" id="scope-filter" hidden>Источник
+        <select id="signal-scope" name="scope">
+          <option value="program">Программа</option>
+          <option value="demo">Демо-анкеты</option>
+        </select>
+      </label>
+      <button class="signals-button-secondary" type="reset">Сбросить фильтры</button>
+    </form>
+
+    <p id="signal-intern-filter" class="signals-scope-note" hidden>Показаны сигналы выбранного стажёра.</p>
+    <p id="signals-loading" class="signals-scope-note" role="status"></p>
+    <p id="signals-error" class="alert" role="alert" hidden></p>
+    <div id="signals-items" class="signals-items"></div>
+    <nav id="signals-pages" class="signals-pagination" aria-label="Страницы сигналов" hidden>
+      <button id="signals-prev" class="signals-button-secondary" type="button">Назад</button>
+      <button id="signals-next" class="signals-button-secondary" type="button">Дальше</button>
+    </nav>
+  </main>
+  <script type="module" src="js/signals.js"></script>
+</body>
+</html>

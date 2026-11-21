@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor
 from uuid import uuid4
 
 from app.config import settings
@@ -63,3 +64,68 @@ def test_demo_keeps_answer_on_provider_failure(client, monkeypatch):
     assert result["signal_codes"] == []
     card = client.get(f"/api/interns/{result['intern_id']}").json()
     assert card["answers"][0]["comment"] == payload["comment"]
+
+
+def test_demo_links_roles_and_months_without_duplicate_slots(client, monkeypatch):
+    monkeypatch.setattr(settings, "demo_feedback_enabled", True)
+    first = {
+        **make_feedback("Задач слишком много, приходится постоянно перерабатывать."),
+        "period": "2026-03",
+    }
+    response = client.post(ENDPOINT, json=first)
+    assert response.status_code == 202
+    receipt = response.json()
+    assert receipt["scenario_id"] == first["submission_id"]
+    assert receipt["period"] == "2026-03-01"
+    pair = {
+        **make_feedback("У стажёра есть сложности со сроками.", score=3),
+        "scenario_id": receipt["scenario_id"],
+        "respondent_type": "mentor",
+        "period": "2026-03",
+    }
+    response = client.post(ENDPOINT, json=pair)
+    assert response.status_code == 202
+    assert response.json()["intern_id"] == receipt["intern_id"]
+    assert "R2" in client.get(f"{ENDPOINT}/{pair['submission_id']}").json()["signal_codes"]
+    assert client.post(ENDPOINT, json={**pair, "submission_id": str(uuid4())}).status_code == 409
+
+    april = {
+        **make_feedback("Задач всё ещё слишком много, снова приходится перерабатывать."),
+        "scenario_id": receipt["scenario_id"],
+        "period": "2026-04",
+    }
+    assert client.post(ENDPOINT, json=april).status_code == 202
+    assert "R5" in client.get(f"{ENDPOINT}/{april['submission_id']}").json()["signal_codes"]
+    card = client.get(f"/api/interns/{receipt['intern_id']}").json()
+    assert len(card["answers"]) == 3
+    assert sorted((item["period"], item["respondent_type"]) for item in card["answers"]) == [
+        ("2026-03-01", "intern"),
+        ("2026-03-01", "mentor"),
+        ("2026-04-01", "intern"),
+    ]
+    unknown_scenario = {**april, "submission_id": str(uuid4()), "scenario_id": str(uuid4())}
+    assert client.post(ENDPOINT, json=unknown_scenario).status_code == 404
+
+
+def test_simultaneous_replies_fill_one_demo_slot(client, monkeypatch):
+    monkeypatch.setattr(settings, "demo_feedback_enabled", True)
+    first = {**make_feedback("Месяц прошёл хорошо."), "period": "2026-03"}
+    receipt = client.post(ENDPOINT, json=first).json()
+    mentor_replies = [
+        {
+            **make_feedback(comment),
+            "scenario_id": receipt["scenario_id"],
+            "respondent_type": "mentor",
+            "period": "2026-03",
+        }
+        for comment in ("Все задачи сделаны вовремя.", "Стажёр справляется с задачами.")
+    ]
+
+    def send(payload):
+        return client.post(ENDPOINT, json=payload).status_code
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        assert sorted(executor.map(send, mentor_replies)) == [202, 409]
+
+    card = client.get(f"/api/interns/{receipt['intern_id']}").json()
+    assert len(card["answers"]) == 2

@@ -54,9 +54,9 @@ function renderKpis(summary) {
       <div class="kpi-hint">в программе</div>
     </article>
     <article class="kpi">
-      <div class="kpi-label">Ответили</div>
+      <div class="kpi-label">Ответили стажёры</div>
       <div class="kpi-value">${escapeHtml(kpis.responded)}</div>
-      <div class="kpi-hint">${responseRate}% участия</div>
+      <div class="kpi-hint">${responseRate}% участия · наставники ${escapeHtml(kpis.mentor_responded)}</div>
     </article>
     <article class="kpi">
       <div class="kpi-label">Средняя оценка</div>

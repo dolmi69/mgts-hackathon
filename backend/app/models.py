@@ -87,6 +87,15 @@ class Answer(Base):
     )
 
 
+class DemoResponseSlot(Base):
+    __tablename__ = "demo_response_slots"
+
+    intern_id: Mapped[int] = mapped_column(ForeignKey("interns.id", ondelete="CASCADE"), primary_key=True)
+    period: Mapped[date] = mapped_column(Date, primary_key=True)
+    respondent_type: Mapped[str] = mapped_column(String(16), primary_key=True)
+    answer_id: Mapped[int] = mapped_column(ForeignKey("answers.id", ondelete="CASCADE"), unique=True)
+
+
 class AIAnalysis(Base):
     __tablename__ = "ai_analysis"
 
@@ -131,6 +140,26 @@ class RiskFlag(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     intern: Mapped[Intern] = relationship(back_populates="flags")
+    actions: Mapped[list["SignalAction"]] = relationship(
+        back_populates="flag", order_by="SignalAction.id", cascade="all, delete-orphan"
+    )
+
+
+class SignalAction(Base):
+    __tablename__ = "signal_actions"
+    __table_args__ = (
+        UniqueConstraint("flag_id", "state", name="uq_signal_action_flag_state"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    flag_id: Mapped[int] = mapped_column(ForeignKey("risk_flags.id", ondelete="CASCADE"), index=True)
+    state: Mapped[str] = mapped_column(String(32))
+    actor: Mapped[str] = mapped_column(String(255))
+    assigned_to: Mapped[str] = mapped_column(String(80))
+    note: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    flag: Mapped[RiskFlag] = relationship(back_populates="actions")
 
 
 class IngestEvent(Base):
@@ -155,3 +184,17 @@ class SyncRun(Base):
     status: Mapped[str] = mapped_column(String(32), default="running")
     stats: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class AnalysisJob(Base):
+    """Durable retry and lease state for an existing answer."""
+
+    __tablename__ = "analysis_jobs"
+
+    answer_id: Mapped[int] = mapped_column(
+        ForeignKey("answers.id", ondelete="CASCADE"), primary_key=True
+    )
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    lease_token: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    retry_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

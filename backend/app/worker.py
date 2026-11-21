@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import logging
 import time
+from datetime import date
 
 from .config import settings
 from .database import SessionLocal, init_db
 from .services.analysis import analyze_pending
+from .services.rules import recompute_flags
 
 logging.basicConfig(
     level=logging.INFO,
@@ -17,9 +19,14 @@ logger = logging.getLogger("worker")
 def main() -> None:
     init_db()
     logger.info("Worker started, provider=%s", settings.llm_provider)
+    last_calendar_refresh = None
     while True:
         db = SessionLocal()
         try:
+            today = date.today()
+            if today != last_calendar_refresh:
+                recompute_flags(db, today=today)
+                last_calendar_refresh = today
             count = analyze_pending(db, limit=20)
         except Exception:  # noqa: BLE001
             logger.exception("Worker iteration failed")

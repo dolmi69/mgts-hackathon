@@ -127,6 +127,7 @@ class AnswerOut(BaseModel):
     overall_score: float
     comment: str
     submitted_at: datetime | None = None
+    current_for_month: bool = True
     analysis_status: str
     analysis: AnswerAnalysisOut | None = None
 
@@ -168,6 +169,8 @@ class KpiOut(BaseModel):
     interns: int
     responded: int
     response_rate: float
+    mentor_responded: int = 0
+    mentor_response_rate: float = 0.0
     avg_score: float | None = None
     flags_high: int = 0
     flags_medium: int = 0
@@ -214,6 +217,8 @@ class InternCard(BaseModel):
     direction: str | None = None
     mentor_name: str | None = None
     start_period: date | None = None
+    is_demo: bool = False
+    can_write: bool = False
     stats: InternStats
     series: list[SeriesPoint] = Field(default_factory=list)
     answers: list[AnswerOut] = Field(default_factory=list)
@@ -223,6 +228,48 @@ class InternCard(BaseModel):
 class PeriodOut(BaseModel):
     period: date
     label: str
+
+
+class CalendarCounts(BaseModel):
+    expected: int = 0
+    intern_responded: int = 0
+    mentor_responded: int = 0
+    intern_missing: int = 0
+    mentor_missing: int = 0
+
+
+class CalendarDirection(CalendarCounts):
+    direction: str
+
+
+class SurveyCalendar(BaseModel):
+    period: date
+    period_label: str
+    deadline: date
+    phase: Literal["upcoming", "open", "closed"]
+    totals: CalendarCounts
+    directions: list[CalendarDirection]
+    reminder_draft: str | None = None
+
+
+class TopicMapCell(BaseModel):
+    period: date
+    responded: int | None
+    suppressed: bool
+    topics: list[TopicCount]
+
+
+class TopicMapDirection(BaseModel):
+    direction: str
+    periods: list[TopicMapCell]
+
+
+class TopicMap(BaseModel):
+    period: date
+    months: int
+    min_group_size: int
+    periods: list[PeriodOut]
+    directions: list[TopicMapDirection]
 
 
 class WebhookResult(BaseModel):
@@ -253,7 +300,7 @@ class HealthOut(BaseModel):
     app: str
 
 
-def build_answer_out(answer: Any) -> AnswerOut:
+def build_answer_out(answer: Any, *, current_for_month: bool = True) -> AnswerOut:
     analysis = None
     if answer.analysis is not None:
         a = answer.analysis
@@ -267,7 +314,7 @@ def build_answer_out(answer: Any) -> AnswerOut:
             confidence=a.confidence,
             model=a.model,
             prompt_version=a.prompt_version,
-            error=a.error,
+            error="Не удалось разобрать комментарий." if a.error else None,
         )
     return AnswerOut(
         id=answer.id,
@@ -278,6 +325,7 @@ def build_answer_out(answer: Any) -> AnswerOut:
         overall_score=answer.overall_score,
         comment=answer.comment or "",
         submitted_at=answer.submitted_at,
+        current_for_month=current_for_month,
         analysis_status=answer.analysis_status,
         analysis=analysis,
     )

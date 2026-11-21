@@ -7,7 +7,8 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
-from .api import dashboard, feedback, health, imports, interns, webhooks
+from .api import dashboard, feedback, health, imports, interns, signals, webhooks
+from .auth import validate_deployment_auth
 from .config import settings
 from .database import SessionLocal, init_db
 from .seed_data import seed_database
@@ -21,6 +22,7 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    validate_deployment_auth()
     init_db()
     if settings.seed_on_startup:
         db = SessionLocal()
@@ -48,6 +50,7 @@ app.include_router(imports.router)
 app.include_router(dashboard.router)
 app.include_router(interns.router)
 app.include_router(feedback.router)
+app.include_router(signals.router)
 
 frontend_dir = Path(settings.frontend_dir)
 if frontend_dir.exists():

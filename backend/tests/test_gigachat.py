@@ -3,6 +3,7 @@ from urllib.parse import parse_qs
 from uuid import UUID
 
 import httpx
+import pytest
 
 from app.services import llm
 
@@ -35,7 +36,9 @@ def test_gigachat_reuses_oauth_token_and_validates_quotes(monkeypatch):
             "sentiment": "negative",
             "topics": ["workload"],
             "problem_topics": ["workload"],
+            "summary": "Стажёр сообщает о перегрузке.",
             "evidence": ["Задач слишком много.", "Выдуманная цитата"],
+            "confidence": 0.9,
         })
         return httpx.Response(200, json={"choices": [{"message": {"content": content}}]})
 
@@ -53,3 +56,31 @@ def test_gigachat_reuses_oauth_token_and_validates_quotes(monkeypatch):
         assert result.result.evidence == ["Задач слишком много."]
     assert len(oauth_requests) == 1
     assert len(chat_requests) == 2
+
+
+@pytest.mark.parametrize(
+    "update",
+    (
+        {"topics": ["other-invalid"], "problem_topics": ["other-invalid"]},
+        {"problem_topics": ["team"]},
+        {"evidence": ["Этой цитаты нет в тексте."]},
+        {"confidence": "0.9"},
+    ),
+)
+def test_remote_result_rejects_invalid_fields_and_ungrounded_complaints(update):
+    payload = {
+        "sentiment": "negative",
+        "topics": ["workload"],
+        "problem_topics": ["workload"],
+        "summary": "Стажёр сообщает о перегрузке.",
+        "evidence": ["Задач слишком много."],
+        "confidence": 0.9,
+        **update,
+    }
+    with pytest.raises(llm.LLMError):
+        llm._parse_remote_result(json.dumps(payload), "Задач слишком много.")
+
+
+def test_empty_remote_result_is_a_failed_analysis():
+    with pytest.raises(llm.LLMError):
+        llm._parse_remote_result("{}", "Всё получилось.")

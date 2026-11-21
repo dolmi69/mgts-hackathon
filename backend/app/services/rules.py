@@ -6,7 +6,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import delete, select
+from sqlalchemy import false, func, select, update
 from sqlalchemy.orm import Session, selectinload
 
 from ..config import settings
@@ -18,6 +18,7 @@ from ..utils import (
     severity_rank,
     truncate,
 )
+from .survey import expected_periods, last_closed_period, latest_monthly_answers
 
 DEFAULT_RULES: dict[str, Any] = {
     "program_months": 6,
@@ -106,14 +107,10 @@ def evaluate_intern(
     Returns plain dicts so the function is easy to test without a database.
     """
     cfg = config or load_rules_config()
-    answers = sorted(answers, key=lambda item: (item.period, item.respondent_type))
     by_period: dict[date, dict[str, Answer]] = {}
-    for answer in answers:
-        by_period.setdefault(answer.period, {})
-        by_period[answer.period].setdefault(answer.respondent_type, answer)
+    for answer in latest_monthly_answers(answers).values():
+        by_period.setdefault(answer.period, {})[answer.respondent_type] = answer
     periods = sorted(by_period)
-    if not periods:
-        return []
 
     flags: dict[tuple[date, str], dict[str, Any]] = {}
 
@@ -249,11 +246,15 @@ def evaluate_intern(
         )
 
     # R4: an expected monthly survey is missing.
-    start = intern.start_period or periods[0]
+    start = intern.start_period
+    through = as_of
+    if start is None and periods:
+        start = periods[0]
+        through = min(through, periods[-1])
     expected = [
-        add_months(start, index) for index in range(int(cfg["program_months"]))
+        period for period in expected_periods(start, int(cfg["program_months"]))
+        if period <= through
     ]
-    expected = [period for period in expected if period <= as_of]
     present_intern = {
         period for period, values in by_period.items() if "intern" in values
     }
@@ -338,48 +339,82 @@ def evaluate_intern(
 
 
 def replace_demo_flags(db: Session, answer: Answer) -> None:
-    """Store signals for one isolated demo response in the analysis transaction."""
-    db.execute(delete(RiskFlag).where(RiskFlag.intern_id == answer.intern_id))
-    db.add_all(
-        RiskFlag(intern_id=answer.intern_id, **item)
-        for item in evaluate_intern(answer.intern, [answer], answer.period)
+    """Refresh one demo case in the same transaction as its answer analysis."""
+    intern, = _lock_interns(db, demo_id=answer.intern_id)
+    db.flush()
+    answers = list(
+        db.scalars(
+            select(Answer)
+            .where(Answer.intern_id == intern.id)
+            .options(selectinload(Answer.analysis))
+        )
     )
+    as_of = max(item.period for item in answers)
+    current = {
+        (intern.id, item["period"], item["rule_code"]): item
+        for item in evaluate_intern(intern, answers, as_of)
+    }
+    _reconcile_flags(db, [intern.id], current)
 
 
-def recompute_flags(db: Session) -> int:
-    """Recompute flags for the internship program."""
-    program_interns = select(Intern).where(Intern.status != DEMO_INTERN_STATUS)
-    interns = db.scalars(program_interns).all()
+def _lock_interns(db: Session, *, demo_id: int | None = None) -> list[Intern]:
+    # SQLite ignores FOR UPDATE. Begin its write transaction before reading the
+    # flag snapshot so another process cannot replace it from stale data.
+    dialect = db.get_bind().dialect.name
+    if dialect == "sqlite":
+        db.execute(
+            update(Intern).where(false()).values(id=Intern.id).execution_options(synchronize_session=False)
+        )
+    if demo_id is not None:
+        return list(db.scalars(select(Intern).where(Intern.id == demo_id).with_for_update()))
+
+    if dialect == "postgresql":
+        key = func.hashtextextended("mgts-program-recompute", 0)
+        db.execute(select(func.pg_advisory_xact_lock(key)))
+    return list(db.scalars(select(Intern).where(Intern.status != DEMO_INTERN_STATUS)))
+
+
+def _reconcile_flags(
+    db: Session, intern_ids: list[int], current: dict[tuple[int, date, str], dict[str, Any]]
+) -> None:
+    existing = db.scalars(select(RiskFlag).where(RiskFlag.intern_id.in_(intern_ids)))
+    for flag in existing:
+        values = current.pop((flag.intern_id, flag.period, flag.rule_code), None)
+        if values is None:
+            flag.status = "inactive"
+            continue
+        flag.status = "open"
+        flag.severity = values["severity"]
+        flag.title = values["title"]
+        flag.explanation = values["explanation"]
+        flag.evidence_answer_ids = values["evidence_answer_ids"]
+    db.add_all(RiskFlag(intern_id=key[0], **values) for key, values in current.items())
+
+
+def recompute_flags(db: Session, *, today: date | None = None) -> int:
+    """Refresh program signals, retaining their IDs and activity history."""
+    interns = _lock_interns(db)
+    intern_ids = [intern.id for intern in interns]
+    db.flush()
     answers = db.scalars(
         select(Answer)
-        .join(Intern)
-        .where(Intern.status != DEMO_INTERN_STATUS)
+        .where(Answer.intern_id.in_(intern_ids))
         .options(selectinload(Answer.analysis))
         .order_by(Answer.period)
     ).all()
-    delete_program_flags = delete(RiskFlag).where(
-        RiskFlag.intern_id.in_(program_interns.with_only_columns(Intern.id))
-    )
-    if not answers:
-        db.execute(delete_program_flags)
-        db.commit()
-        return 0
 
-    as_of = max(answer.period for answer in answers)
     config = load_rules_config()
+    as_of = last_closed_period(today or date.today(), grace_days=int(config["r4"]["grace_days"]))
     by_intern: dict[int, list[Answer]] = {}
     for answer in answers:
         by_intern.setdefault(answer.intern_id, []).append(answer)
 
-    new_flags: list[RiskFlag] = []
-    for intern in interns:
-        intern_answers = by_intern.get(intern.id, [])
-        if not intern_answers:
-            continue
-        for item in evaluate_intern(intern, intern_answers, as_of, config):
-            new_flags.append(RiskFlag(intern_id=intern.id, **item))
-
-    db.execute(delete_program_flags)
-    db.add_all(new_flags)
+    current = {
+        (intern.id, item["period"], item["rule_code"]): item
+        for intern in interns
+        for item in evaluate_intern(intern, by_intern.get(intern.id, []), as_of, config)
+    }
+    count = len(current)
+    _reconcile_flags(db, intern_ids, current)
     db.commit()
-    return len(new_flags)
+    return count

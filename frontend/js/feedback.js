@@ -3,19 +3,43 @@ import { apiGet, apiRequest } from "./api.js";
 const endpoint = "/api/demo/feedback";
 const form = document.getElementById("feedback-form");
 const fields = form.querySelector("fieldset");
+const role = document.getElementById("feedback-role");
+const period = document.getElementById("feedback-period");
 const score = document.getElementById("feedback-score");
 const comment = document.getElementById("feedback-comment");
 const status = document.getElementById("feedback-status");
 const error = document.getElementById("feedback-error");
 const card = document.getElementById("feedback-card");
 const check = document.getElementById("feedback-check");
+const inbox = document.getElementById("feedback-signals");
+const scenario = document.getElementById("feedback-scenario");
+const startOver = document.getElementById("feedback-new");
+const example = document.getElementById("feedback-example");
 
 let draft = null;
+let scenarioId = null;
 let submissionId = new URLSearchParams(location.search).get("submission");
 
+function currentMonth() {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function rememberSubmission() {
+  const url = new URL(location.href);
+  if (submissionId) url.searchParams.set("submission", submissionId);
+  else url.searchParams.delete("submission");
+  history.replaceState({}, "", url);
+}
+
 function showStatus(result) {
+  scenarioId = result.scenario_id;
+  scenario.textContent = `Демо-стажёр №${result.intern_id}`;
+  startOver.hidden = false;
   card.href = `intern.html?id=${result.intern_id}#answer-${result.answer_id}`;
   card.hidden = false;
+  inbox.href = `signals.html?scope=demo&intern_id=${result.intern_id}`;
+  inbox.hidden = !result.signal_codes.length;
   if (result.analysis_status === "done") {
     const signal = result.signal_codes.length
       ? `Сигналы: ${result.signal_codes.join(", ")}.`
@@ -43,6 +67,7 @@ async function pollStatus() {
 
 async function run(action) {
   fields.disabled = true;
+  startOver.disabled = true;
   check.hidden = true;
   error.hidden = true;
   try {
@@ -54,9 +79,30 @@ async function run(action) {
     check.hidden = !submissionId;
   } finally {
     fields.disabled = false;
+    startOver.disabled = false;
   }
 }
 
+period.value = currentMonth();
+example.addEventListener("click", () => {
+  const mentor = role.value === "mentor";
+  score.value = mentor ? "3" : "5";
+  comment.value = mentor
+    ? "Стажёр регулярно перерабатывает и не успевает закрывать задачи."
+    : "Задач слишком много. Снова пришлось работать допоздна.";
+  comment.setCustomValidity("");
+});
+startOver.addEventListener("click", () => {
+  scenarioId = null;
+  submissionId = null;
+  draft = null;
+  rememberSubmission();
+  form.reset();
+  period.value = currentMonth();
+  scenario.textContent = "Новый сценарий";
+  status.textContent = "";
+  startOver.hidden = card.hidden = inbox.hidden = error.hidden = check.hidden = true;
+});
 comment.addEventListener("input", () => comment.setCustomValidity(""));
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -66,13 +112,18 @@ form.addEventListener("submit", async (event) => {
     comment.reportValidity();
     return;
   }
-  const value = Number(score.value);
-  if (!draft || draft.score !== value || draft.comment !== text) {
-    draft = { submission_id: crypto.randomUUID(), score: value, comment: text };
+  const payload = {
+    scenario_id: scenarioId,
+    respondent_type: role.value,
+    period: period.value,
+    score: Number(score.value),
+    comment: text,
+  };
+  if (!draft || Object.keys(payload).some((key) => payload[key] !== draft[key])) {
+    draft = { submission_id: crypto.randomUUID(), ...payload };
   }
   status.textContent = "Отправляем анкету…";
-  card.hidden = true;
-  submissionId = null;
+  card.hidden = inbox.hidden = true;
 
   await run(async () => {
     const result = await apiRequest(endpoint, {
@@ -81,14 +132,20 @@ form.addEventListener("submit", async (event) => {
       body: JSON.stringify(draft),
     });
     submissionId = result.submission_id;
-    const url = new URL(location.href);
-    url.searchParams.set("submission", submissionId);
-    history.replaceState({}, "", url);
+    rememberSubmission();
     draft = null;
-    form.reset();
+    score.value = comment.value = "";
+    if (result.respondent_type === "intern") role.value = "mentor";
     if (!showStatus(result)) await pollStatus();
   });
 });
 
 check.addEventListener("click", () => run(pollStatus));
-if (submissionId) run(pollStatus);
+if (submissionId) {
+  run(async () => {
+    const result = await apiGet(`${endpoint}/${encodeURIComponent(submissionId)}`);
+    period.value = result.period.slice(0, 7);
+    role.value = result.respondent_type === "intern" ? "mentor" : "intern";
+    if (!showStatus(result)) await pollStatus();
+  });
+}

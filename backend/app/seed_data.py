@@ -10,7 +10,18 @@ from sqlalchemy.orm import Session
 
 from .adapters.csv_adapter import parse_answers_csv, parse_interns_csv
 from .config import settings
-from .models import AIAnalysis, Answer, IngestEvent, Intern, Mentor, RiskFlag, SyncRun
+from .models import (
+    AIAnalysis,
+    AnalysisJob,
+    Answer,
+    DemoResponseSlot,
+    IngestEvent,
+    Intern,
+    Mentor,
+    RiskFlag,
+    SignalAction,
+    SyncRun,
+)
 from .services.analysis import analyze_pending
 from .services.ingest import get_or_create_intern, get_or_create_mentor, upsert_answer
 from .services.rules import recompute_flags
@@ -428,7 +439,10 @@ def seed_database(
     reset: bool = False,
 ) -> dict[str, int]:
     if reset:
-        for model in (RiskFlag, AIAnalysis, SyncRun, IngestEvent, Answer, Intern, Mentor):
+        for model in (
+            SignalAction, RiskFlag, AIAnalysis, AnalysisJob, DemoResponseSlot,
+            SyncRun, IngestEvent, Answer, Intern, Mentor,
+        ):
             db.execute(delete(model))
         db.commit()
 

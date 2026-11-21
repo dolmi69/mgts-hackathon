@@ -1,6 +1,7 @@
 import {
   analysisStatus,
   apiGet,
+  apiRequest,
   escapeHtml,
   flagChip,
   formatAverage,
@@ -29,6 +30,7 @@ function cacheElements() {
   els.flagsHint = document.getElementById("flags-hint");
   els.timeline = document.getElementById("timeline");
   els.chart = document.getElementById("score-chart");
+  els.inbox = document.getElementById("intern-inbox-link");
 }
 
 function stat(value, label) {
@@ -45,6 +47,10 @@ function renderProfile(card) {
     card.start_period ? `старт: ${formatPeriod(card.start_period)}` : null,
   ].filter(Boolean);
   els.meta.textContent = meta.join(" · ");
+  const params = new URLSearchParams({ intern_id: card.id });
+  if (card.is_demo) params.set("scope", "demo");
+  els.inbox.href = `signals.html?${params}`;
+  els.inbox.hidden = false;
   els.stats.innerHTML = [
     stat(card.stats.total_answers, "ответов"),
     stat(formatAverage(card.stats.avg_intern), "средняя стажёра"),
@@ -188,7 +194,19 @@ function renderAnalysis(answer) {
     return '<div class="analysis"><span class="badge pending">анализ идёт</span><p class="analysis-summary">Комментарий уже сохранён, разметка появится после обработки.</p></div>';
   }
   if (answer.analysis_status === "failed") {
-    return `<div class="analysis"><span class="badge failed">ошибка анализа</span><p class="analysis-summary">${escapeHtml(answer.analysis && answer.analysis.error ? answer.analysis.error : "Модель не ответила, но исходный комментарий сохранён.")}</p></div>`;
+    const retry = state.card.can_write ? `
+      <button type="button" class="button" data-retry-analysis="${escapeHtml(answer.id)}">
+        Повторить анализ
+      </button>
+      <p class="analysis-summary" role="status"></p>
+    ` : "";
+    return `
+      <div class="analysis">
+        <span class="badge failed">ошибка анализа</span>
+        <p class="analysis-summary">Модель не смогла разобрать комментарий. Исходный ответ сохранён.</p>
+        ${retry}
+      </div>
+    `;
   }
   const analysis = answer.analysis;
   if (!analysis || analysis.status !== "done") {
@@ -260,8 +278,13 @@ function renderTimeline(card) {
 
   els.timeline.innerHTML = periods
     .map(({ point, answers }) => {
-      const internAnswer = answers.find((answer) => answer.respondent_type === "intern");
-      const mentorAnswer = answers.find((answer) => answer.respondent_type === "mentor");
+      const internAnswer = answers.find(
+        (answer) => answer.respondent_type === "intern" && answer.current_for_month !== false
+      );
+      const mentorAnswer = answers.find(
+        (answer) => answer.respondent_type === "mentor" && answer.current_for_month !== false
+      );
+      const older = answers.filter((answer) => answer.current_for_month === false);
       const flags = (card.flags || []).filter((flag) => flag.period === point.period);
       const flagHtml = flags.length
         ? `<div class="chips">${flags.map((flag) => flagChip(flag)).join("")}</div>`
@@ -276,6 +299,14 @@ function renderTimeline(card) {
             ${renderAnswer(internAnswer, "Стажёр")}
             ${renderAnswer(mentorAnswer, "Наставник")}
           </div>
+          ${older.length ? `
+            <details class="month-history">
+              <summary>Предыдущие ответы за месяц · ${older.length}</summary>
+              ${older.map((answer) => renderAnswer(
+                answer, answer.respondent_type === "intern" ? "Стажёр" : "Наставник"
+              )).join("")}
+            </details>
+          ` : ""}
         </section>
       `;
     })
@@ -288,10 +319,43 @@ function render(card) {
   renderFlags(card);
   renderChart(card);
   renderTimeline(card);
+  const answerId = /^#(answer-\d+)$/.exec(window.location.hash)?.[1];
+  if (answerId) {
+    const answer = document.getElementById(answerId);
+    const older = answer?.closest(".month-history");
+    if (older) older.open = true;
+    answer?.scrollIntoView({ block: "center" });
+  }
+}
+
+async function retryAnalysis(event) {
+  const button = event.target.closest("[data-retry-analysis]");
+  if (!button || button.disabled) return;
+  const answerId = Number(button.dataset.retryAnalysis);
+  const path = `/api/interns/${state.card.id}`;
+  const status = button.parentElement.querySelector('[role="status"]');
+  button.disabled = true;
+  status.textContent = "Ответ отправлен на повторный анализ…";
+  try {
+    await apiRequest(`${path}/answers/${answerId}/retry`, { method: "POST" });
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      const card = await apiGet(path);
+      const answer = card.answers.find((item) => item.id === answerId);
+      if (!answer || !["pending", "processing"].includes(answer.analysis_status) || attempt === 9) {
+        render(card);
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+    }
+  } catch (error) {
+    status.textContent = error.message;
+    button.disabled = false;
+  }
 }
 
 async function init() {
   cacheElements();
+  els.timeline.addEventListener("click", retryAnalysis);
   const id = new URLSearchParams(window.location.search).get("id");
   if (!id || !/^\d+$/.test(id)) {
     showError(els.error, "Не указан стажёр. Вернитесь к списку и выберите карточку.");

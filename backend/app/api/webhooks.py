@@ -3,16 +3,17 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Header, Query, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, Request, status
+from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
-from ..adapters.yandex_forms import parse_payload
+from ..adapters.yandex_forms import AdapterError, normalize_source, parse_payload
 from ..auth import check_webhook_secret
 from ..config import settings
 from ..database import SessionLocal, get_db
 from ..schemas import WebhookResult
 from ..services.analysis import analyze_answer_by_id
-from ..services.ingest import log_ingest_event, upsert_answer
+from ..services.ingest import DemoInternError, log_ingest_event, upsert_answer
 from ..services.rules import recompute_flags
 
 logger = logging.getLogger(__name__)
@@ -45,6 +46,8 @@ async def receive_webhook(
     db: Session = Depends(get_db),
 ) -> WebhookResult:
     check_webhook_secret(secret, x_webhook_secret)
+    if source.strip().lower().replace("-", "_") == "demo_feedback":
+        raise HTTPException(status_code=422, detail="Этот источник зарезервирован для демо-анкет.")
 
     try:
         payload: Any = await request.json()
@@ -57,23 +60,36 @@ async def receive_webhook(
     try:
         canonical = parse_payload(source, payload)
     except Exception as exc:  # noqa: BLE001 - preserve the raw event for manual mapping
-        logger.warning("Cannot parse webhook from %s: %s", source, exc)
+        if isinstance(exc, AdapterError):
+            detail = str(exc)
+        elif isinstance(exc, ValidationError):
+            fields = {
+                ".".join(map(str, error["loc"]))
+                for error in exc.errors(include_input=False, include_context=False, include_url=False)
+            }
+            detail = f"Проверьте поля анкеты: {', '.join(sorted(fields))}."
+        else:
+            detail = "Проверьте формат полей и отчётного периода анкеты."
+        logger.warning("Cannot parse webhook: %s", type(exc).__name__)
         log_ingest_event(
             db,
             source=source,
             payload=payload,
             status="parse_error",
-            error=str(exc)[:2000],
+            error=detail[:2000],
             external_id=str(payload.get("id") or payload.get("answer_id") or "") or None,
         )
         return WebhookResult(
             status="stored_unparsed",
             created=False,
-            message=str(exc)[:500],
+            message=detail[:500],
         )
 
-    canonical.source = source
-    answer, created = upsert_answer(db, canonical, raw_payload=payload)
+    canonical.source = normalize_source(source)
+    try:
+        answer, created = upsert_answer(db, canonical, raw_payload=payload)
+    except DemoInternError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     db.commit()
 
     if created and settings.analyze_in_background:

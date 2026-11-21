@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f5f5f7">
+  <title>Календарь и темы · МГТС</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="css/app.css">
+  <link rel="stylesheet" href="css/program.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="container topbar-inner">
+      <a class="brand" href="index.html">
+        <span class="brand-mark">МГТС</span>
+        <span class="brand-copy"><strong>Сигналы по стажёрам</strong></span>
+      </a>
+      <nav class="topbar-meta" aria-label="Навигация">
+        <a href="index.html">Дашборд</a>
+        <a href="signals.html">Входящие HR</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container page">
+    <section class="page-head">
+      <div>
+        <h1>Календарь и темы</h1>
+        <p class="lede">Проверьте, кто ответил за месяц и какие проблемы повторяются.</p>
+      </div>
+      <div class="controls">
+        <label for="program-period">Месяц
+          <select id="program-period" disabled></select>
+        </label>
+      </div>
+    </section>
+
+    <p id="program-error" class="alert" role="alert" hidden></p>
+    <p id="program-status" class="muted" role="status"></p>
+
+    <div id="program-content" hidden>
+      <section class="card program-panel" aria-labelledby="calendar-heading">
+        <header class="card-head">
+          <div>
+            <h2 id="calendar-heading">Сбор анкет</h2>
+            <p id="calendar-deadline" class="muted"></p>
+          </div>
+          <span id="calendar-phase" class="badge neutral"></span>
+        </header>
+        <dl id="calendar-totals" class="program-summary"></dl>
+        <div class="program-scroll" tabindex="0" aria-label="Сбор анкет по направлениям">
+          <table class="program-table">
+            <thead>
+              <tr>
+                <th scope="col">Направление</th>
+                <th scope="col">Ждём от каждой роли</th>
+                <th scope="col">Ответили стажёры</th>
+                <th scope="col">Ответили наставники</th>
+                <th scope="col">Нет ответа стажёра</th>
+                <th scope="col">Нет ответа наставника</th>
+              </tr>
+            </thead>
+            <tbody id="calendar-directions"></tbody>
+          </table>
+        </div>
+        <details id="calendar-reminder" class="program-reminder" hidden>
+          <summary>Черновик напоминания</summary>
+          <p id="calendar-draft"></p>
+        </details>
+      </section>
+
+      <section class="card program-panel" aria-labelledby="topics-heading">
+        <header class="card-head program-topics-head">
+          <div>
+            <h2 id="topics-heading">Проблемы по направлениям</h2>
+            <p id="program-privacy" class="muted"></p>
+          </div>
+          <div class="controls">
+            <label for="program-topic">Тема
+              <select id="program-topic"></select>
+            </label>
+            <label for="program-months">Период
+              <select id="program-months">
+                <option value="3">3 месяца</option>
+                <option value="6" selected>6 месяцев</option>
+                <option value="12">12 месяцев</option>
+              </select>
+            </label>
+          </div>
+        </header>
+        <div class="program-scroll" tabindex="0" aria-label="Динамика проблем по направлениям">
+          <table class="program-table program-map">
+            <thead id="program-topics-head"></thead>
+            <tbody id="program-topics-body"></tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  </main>
+  <script type="module" src="js/program.js"></script>
+</body>
+</html>

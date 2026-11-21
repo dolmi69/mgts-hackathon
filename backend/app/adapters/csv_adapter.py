@@ -39,6 +39,7 @@ ANSWER_ALIASES: dict[str, set[str]] = {
     "external_answer_id": _aliases(
         "external_answer_id", "answer_id", "id", "номер_ответа", "id_ответа"
     ),
+    "form_id": _aliases("form_id", "id_формы", "форма"),
     "period": _aliases("period", "month", "месяц", "период", "отчетный_месяц"),
     "respondent_type": _aliases(
         "respondent_type", "role", "роль", "кто", "тип_респондента"
@@ -50,7 +51,7 @@ ANSWER_ALIASES: dict[str, set[str]] = {
         "mentor_external_id", "mentor_id", "наставник", "id_наставника"
     ),
     "overall": _aliases(
-        "overall", "overall_score", "оценка", "общая_оценка", "удовлетворенность"
+        "overall", "overall_score", "общая_оценка", "удовлетворенность"
     ),
     "workload": _aliases("workload", "нагрузка"),
     "mentorship": _aliases("mentorship", "наставничество"),
@@ -107,7 +108,7 @@ def _auto_id(row: dict[str, str], period: str, respondent: str, intern: str) -> 
             respondent,
             intern,
             _pick(row, ANSWER_ALIASES["comment"]),
-            _pick(row, ANSWER_ALIASES["overall"]),
+            _pick(row, ANSWER_ALIASES["overall"] | {"оценка"}),
         ]
     )
     return "csv-" + hashlib.sha1(payload.encode("utf-8")).hexdigest()[:20]
@@ -129,7 +130,14 @@ def parse_answers_csv(data: bytes) -> tuple[list[CanonicalAnswer], list[str]]:
             intern_id = _pick(row, ANSWER_ALIASES["intern_external_id"])
             if not intern_id:
                 raise ValueError("не указан стажёр")
-            overall = _parse_float(_pick(row, ANSWER_ALIASES["overall"]), "overall")
+            explicit = [
+                value for key, value in row.items()
+                if key in ANSWER_ALIASES["overall"] and value and value.strip()
+            ]
+            overall_values = {_parse_float(value, "overall") for value in explicit or [row.get("оценка")]}
+            if len(overall_values) != 1:
+                raise ValueError("общая оценка неоднозначна")
+            overall = overall_values.pop()
             scores: dict[str, Any] = {"overall": overall}
             workload = _pick(row, ANSWER_ALIASES["workload"])
             mentorship = _pick(row, ANSWER_ALIASES["mentorship"])
@@ -144,6 +152,7 @@ def parse_answers_csv(data: bytes) -> tuple[list[CanonicalAnswer], list[str]]:
                 CanonicalAnswer(
                     source="csv",
                     external_answer_id=external_id,
+                    form_id=_pick(row, ANSWER_ALIASES["form_id"]) or None,
                     period=period,
                     respondent_type=respondent,
                     intern_external_id=intern_id,
