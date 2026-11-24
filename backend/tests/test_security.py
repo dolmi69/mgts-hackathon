@@ -261,3 +261,16 @@ def test_login_failures_survive_restart(client, protected, monkeypatch):
         assert session.query(AuthFailure).count() == 2
     with TestClient(app) as restarted:  # a new app lifespan, same database
         assert restarted.get("/api/periods", auth=("hr", "hr-password-123")).status_code == 429
+
+
+def test_worker_refuses_foreign_llm(monkeypatch):
+    from app import worker
+
+    started = []
+    monkeypatch.setattr(worker, "init_db", lambda: started.append("db"))
+    monkeypatch.setattr(settings, "app_env", "pilot")
+    monkeypatch.setattr(settings, "llm_provider", "openai")
+    monkeypatch.setattr(settings, "llm_base_url", "https://api.deepseek.com/v1")
+    with pytest.raises(RuntimeError, match="abroad"):
+        worker.main()
+    assert started == []

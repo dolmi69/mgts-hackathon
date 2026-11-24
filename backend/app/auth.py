@@ -147,7 +147,19 @@ def _llm_is_cross_border() -> bool:
     return not (host.endswith(".ru") or any(host == item or host.endswith("." + item) for item in RUSSIAN_LLM_HOSTS))
 
 
+def validate_llm_location() -> None:
+    """Refuse a foreign LLM where real data is processed (API and worker)."""
+    if app_env() in OPEN_ENVIRONMENTS or app_env() == "demo":
+        return
+    if _llm_is_cross_border() and not settings.llm_allow_cross_border:
+        raise RuntimeError(
+            "LLM_BASE_URL sends personal data abroad. Use gigachat/yandex, or set "
+            "LLM_ALLOW_CROSS_BORDER=true after notifying Roskomnadzor (152-FZ art. 12)"
+        )
+
+
 def validate_deployment_auth() -> None:
+    validate_llm_location()
     hr_pair = bool(settings.dashboard_user), bool(settings.dashboard_password)
     viewer_pair = bool(settings.dashboard_viewer_user), bool(settings.dashboard_viewer_password)
     if hr_pair[1] and not hr_pair[0]:
@@ -172,11 +184,6 @@ def validate_deployment_auth() -> None:
     if env in STRICT_ENVIRONMENTS:
         if settings.demo_feedback_enabled or settings.seed_on_startup:
             raise RuntimeError("Use a separate demo environment for feedback and seed data")
-        if _llm_is_cross_border() and not settings.llm_allow_cross_border:
-            raise RuntimeError(
-                "LLM_BASE_URL sends personal data abroad. Use gigachat/yandex, or set "
-                "LLM_ALLOW_CROSS_BORDER=true after notifying Roskomnadzor (152-FZ art. 12)"
-            )
 
 
 def _unauthorized() -> HTTPException:

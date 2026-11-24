@@ -4,6 +4,7 @@ import logging
 import time
 from datetime import date
 
+from .auth import validate_llm_location
 from .config import settings
 from .database import SessionLocal, init_db
 from .services.analysis import analyze_pending
@@ -17,6 +18,7 @@ logger = logging.getLogger("worker")
 
 
 def main() -> None:
+    validate_llm_location()
     init_db()
     # Load the NER model once at startup, not on the first survey comment.
     from .services.anonymize import ner_available

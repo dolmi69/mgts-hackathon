@@ -33,6 +33,7 @@ services:
       LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-40}
       LLM_MAX_RETRIES: ${LLM_MAX_RETRIES:-2}
       LLM_ALLOW_CROSS_BORDER: ${LLM_ALLOW_CROSS_BORDER:-false}
+      ANONYMIZER_NER: ${ANONYMIZER_NER:-true}
       WEBHOOK_SECRET: ${WEBHOOK_SECRET:?Set WEBHOOK_SECRET in .env (openssl rand -hex 24)}
       YANDEX_FORMS_FIELDS: ${YANDEX_FORMS_FIELDS:-}
       WEBHOOK_UNKNOWN_INTERNS: ${WEBHOOK_UNKNOWN_INTERNS:-}
@@ -71,6 +72,10 @@ services:
     build: ./backend
     command: python -m app.worker
     environment:
+      # The worker is what sends comments to the LLM, so it checks the same rules.
+      APP_ENV: ${APP_ENV:-demo}
+      LLM_ALLOW_CROSS_BORDER: ${LLM_ALLOW_CROSS_BORDER:-false}
+      ANONYMIZER_NER: ${ANONYMIZER_NER:-true}
       DATABASE_URL: postgresql+psycopg://mgts:${POSTGRES_PASSWORD}@db:5432/mgts
       LLM_PROVIDER: ${LLM_PROVIDER:-mock}
       LLM_API_KEY: ${LLM_API_KEY:-}
