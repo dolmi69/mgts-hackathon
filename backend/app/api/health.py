@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from ..auth import app_env
 from ..config import settings
 from ..database import get_db
 from ..schemas import HealthOut
@@ -17,6 +18,7 @@ def health(db: Session = Depends(get_db)) -> HealthOut:
     return HealthOut(
         status="ok",
         db="ok",
-        llm_provider=settings.llm_provider,
+        # Do not reveal the stack to anonymous clients outside local dev.
+        llm_provider=settings.llm_provider if app_env() == "dev" else None,
         app=settings.app_name,
     )

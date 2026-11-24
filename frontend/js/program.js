@@ -109,7 +109,11 @@ async function init() {
     }
     const requested = new URLSearchParams(location.search);
     periods.forEach(({ label, period }) => periodSelect.add(new Option(label, period)));
-    if (periods.some(({ period }) => period === requested.get("period"))) periodSelect.value = requested.get("period");
+    // Months come from the survey schedule: open the last one that has answers.
+    const selected = periods.find(({ period }) => period === requested.get("period"))
+      || periods.find((item) => item.has_answers)
+      || periods[0];
+    periodSelect.value = selected.period;
     if (["3", "6", "12"].includes(requested.get("months"))) monthsSelect.value = requested.get("months");
     periodSelect.disabled = false;
     await load();

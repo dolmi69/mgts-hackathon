@@ -21,5 +21,16 @@
   "r6": {
     "low_score": 2.0,
     "enabled": true
+  },
+  "r7": {
+    "enabled": true
+  },
+  "mentors": {
+    "attention_share": 0.75,
+    "min_interns": 2
+  },
+  "sla": {
+    "high_days": 3,
+    "medium_days": 7
   }
 }

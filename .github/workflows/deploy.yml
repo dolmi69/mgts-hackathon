@@ -1,0 +1,55 @@
+name: Deploy
+
+# Off until the repository variable DEPLOY_ENABLED is "true" (docs/deploy.md).
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  tests:
+    if: vars.DEPLOY_ENABLED == 'true' && github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/tests.yml
+
+  deploy:
+    needs: tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+    permissions: {}
+    steps:
+      - name: Deploy this commit over SSH
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          SSH_USER: ${{ secrets.DEPLOY_USER }}
+          SSH_PORT: ${{ vars.DEPLOY_PORT || '22' }}
+        run: |
+          for name in SSH_KEY KNOWN_HOSTS HOST SSH_USER; do
+            [ -n "${!name}" ] || { echo "::error::$name is not configured"; exit 1; }
+          done
+          umask 077
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          ssh -i ~/.ssh/deploy -p "$SSH_PORT" \
+            -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            -o ConnectTimeout=20 -o ServerAliveInterval=30 \
+            "$SSH_USER@$HOST" "$GITHUB_SHA"
+      - name: Check the public address
+        if: vars.DEPLOY_URL != ''
+        env:
+          URL: ${{ vars.DEPLOY_URL }}
+        run: |
+          curl --fail --silent --show-error --max-time 20 --retry 10 --retry-delay 6 --retry-all-errors \
+            --output /dev/null "${URL%/}/api/health"
+          code="$(curl --silent --max-time 20 --output /dev/null --write-out '%{http_code}' "${URL%/}/api/dashboard/summary")"
+          [ "$code" = 401 ] || { echo "::error::dashboard without a password returned $code, expected 401"; exit 1; }

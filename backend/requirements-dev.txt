@@ -1,0 +1,4 @@
+# Test and audit tools; not installed into the production image.
+-r requirements.txt
+pytest==9.2.0
+pip-audit==2.10.1

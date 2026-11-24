@@ -29,6 +29,14 @@ class LLMError(RuntimeError):
         self.retryable = retryable
 
 
+class UnquotedComplaint(LLMError):
+    """The labels are valid, but no quote confirms the complaint."""
+
+    def __init__(self, result: AIResult) -> None:
+        super().__init__("LLM complaint has no matching quote", retryable=True)
+        self.result = result
+
+
 @dataclass
 class ProviderResult:
     result: AIResult
@@ -101,6 +109,30 @@ TOPIC_KEYWORDS: dict[str, tuple[str, ...]] = {
         "онбординг",
     ),
     "growth": ("рост", "развит", "обучен", "карьер", "навык", "опыт"),
+    # Intent to leave. Matched by _has_leave_intent() with a negation check,
+    # never by plain substring search in _mock_topics().
+    "leave": (
+        "о выходе",
+        "об уходе",
+        "об увольнении",
+        "уйти",
+        "уходить",
+        "ухожу",
+        "уйду",
+        "уволиться",
+        "увольняться",
+        "уволюсь",
+        "увольняюсь",
+        "другую работу",
+        "новую работу",
+        "другое место",
+        "получил оффер",
+        "получила оффер",
+        "получил предложение",
+        "получила предложение",
+        "оффер в друг",
+        "есть оффер",
+    ),
 }
 
 TOPIC_LABELS = {
@@ -110,6 +142,7 @@ TOPIC_LABELS = {
     "team": "команда",
     "process": "процессы",
     "growth": "развитие",
+    "leave": "намерение уйти",
     "other": "другое",
 }
 
@@ -176,10 +209,38 @@ def _sentences(text: str) -> list[str]:
     return parts or ([text.strip()] if text.strip() else [])
 
 
+NEGATION_WORDS = frozenset({"не", "ни", "нет", "никуда", "незачем", "никогда"})
+CLAUSE_RE = re.compile(r"[.,;:!?()]|\s(?:но|а|однако|хотя)\s|\s[-—–]\s")
+WORD_RE = re.compile(r"[а-яёa-z]+")
+LEAVE_NOT_QUITTING = ("отпуск", "больничн", "обед", "домой", "пораньше", "раньше")
+
+
+def _leave_negated(clause: str, start: int, end: int) -> bool:
+    """«Не думаю уходить», «уходить не собираюсь», «никуда не уйду»."""
+    before = WORD_RE.findall(clause[:start])[-2:]
+    after = WORD_RE.findall(clause[end:])[:2]
+    if any(word.startswith(LEAVE_NOT_QUITTING) for word in after):
+        return True  # «ухожу в отпуск» is not quitting
+    return any(word in NEGATION_WORDS for word in before + after)
+
+
+def _has_leave_intent(text: str) -> bool:
+    for clause in CLAUSE_RE.split(text.lower()):
+        for keyword in TOPIC_KEYWORDS["leave"]:
+            start = clause.find(keyword)
+            while start != -1:
+                if not _leave_negated(clause, start, start + len(keyword)):
+                    return True
+                start = clause.find(keyword, start + 1)
+    return False
+
+
 def _mock_topics(text: str) -> list[str]:
     low = text.lower()
     found: list[str] = []
     for topic, keywords in TOPIC_KEYWORDS.items():
+        if topic == "leave":
+            continue
         if any(keyword in low for keyword in keywords):
             found.append(topic)
     return found
@@ -236,6 +297,16 @@ class MockProvider(BaseProvider):
 
         topics = _mock_topics(text)
         problem_topics = _mock_problem_topics(text, topics)
+        leave = _has_leave_intent(text)
+        if leave:
+            # An intent to leave is a problem even without complaint words.
+            problem_topics = [topic for topic in problem_topics if topic != "other"]
+            problem_topics.append("leave")
+            topics.append("leave")
+            if sentiment == "positive":
+                sentiment = "mixed"
+            elif sentiment == "neutral":
+                sentiment = "negative"
         if problem_topics and "other" in problem_topics and "other" not in topics:
             topics.append("other")
 
@@ -252,6 +323,9 @@ class MockProvider(BaseProvider):
                 for sentence in evidence_source
                 if _contains_any(sentence, POSITIVE_MARKERS)
             ]
+        if leave:
+            leave_evidence = [s for s in evidence_source if _has_leave_intent(s)]
+            evidence = leave_evidence + [s for s in evidence if s not in leave_evidence]
         if not evidence and evidence_source:
             evidence = [evidence_source[0]]
         evidence = evidence[:3]
@@ -282,7 +356,7 @@ class MockProvider(BaseProvider):
             problem_topics=problem_topics,
             summary=summary,
             evidence=evidence,
-            confidence=0.75 if (negative or positive) else 0.45,
+            confidence=0.75 if (negative or positive or leave) else 0.45,
         )
         return ProviderResult(result=result, raw=result.model_dump(), model="mock")
 
@@ -313,9 +387,31 @@ def _extract_json(text: str) -> dict[str, Any]:
     return parsed
 
 
+MIN_QUOTE_CHARS = 8
+
+
+def is_valid_quote(quote: str, comment: str) -> bool:
+    """A quote must be a real, whole-word fragment of the comment.
+
+    «я» or «нравится» cut out of «не нравится» are not evidence.
+    """
+    quote = (quote or "").strip()
+    if not quote or len(quote) < min(MIN_QUOTE_CHARS, len(comment.strip())):
+        return False
+    for match in re.finditer(re.escape(quote), comment):
+        start, end = match.span()
+        if (start and comment[start - 1].isalnum()) or (end < len(comment) and comment[end].isalnum()):
+            continue
+        before = comment[:start].rstrip().lower()
+        if before.endswith((" не", " ни")) or before in {"не", "ни"}:
+            continue  # the quote drops a negation
+        return True
+    return False
+
+
 def _validate_result(result: AIResult, comment: str) -> AIResult:
     # Evidence must be an exact substring; never show invented quotes.
-    result.evidence = [item for item in result.evidence if item and item in comment][:3]
+    result.evidence = [item for item in result.evidence if is_valid_quote(item, comment)][:3]
     result.topics = [item for item in result.topics if item][:8]
     result.problem_topics = [item for item in result.problem_topics if item in result.topics][:8]
     if result.sentiment in {"negative", "mixed"} and not result.evidence:
@@ -329,23 +425,35 @@ class _RemoteResult(BaseModel):
     sentiment: Sentiment
     topics: list[str]
     problem_topics: list[str]
-    summary: str = Field(min_length=1, max_length=1500)
+    summary: str = Field(min_length=1, max_length=600)
     evidence: list[str]
     confidence: float = Field(ge=0, le=1)
 
 
-def _parse_remote_result(text: str, comment: str) -> AIResult:
+def _parse_remote_result(text: str, comment: str, *, strict: bool = True) -> AIResult:
     try:
         validated = _RemoteResult.model_validate(_extract_json(text))
     except ValidationError as exc:
         raise LLMError("LLM response does not match the required schema") from exc
+    if not strict:
+        # The repair round did not help. An invented code must not lose the
+        # whole answer, nor reach the UI: a complaint becomes "other".
+        known = lambda codes: list(dict.fromkeys(code if code in TOPIC_LABELS else "other" for code in codes))  # noqa: E731
+        validated.problem_topics = known(validated.problem_topics)
+        validated.topics = list(dict.fromkeys(
+            [code for code in validated.topics if code in TOPIC_LABELS] + validated.problem_topics
+        ))
     if set(validated.topics) - TOPIC_LABELS.keys():
         raise LLMError("LLM response contains unknown topics")
     if set(validated.problem_topics) - set(validated.topics):
         raise LLMError("LLM response lists a problem absent from its topics")
+    if validated.problem_topics and validated.sentiment in {"positive", "neutral"}:
+        # The model found a complaint, so the tone cannot be complaint-free.
+        validated.sentiment = "mixed"
     result = _validate_result(AIResult.model_validate(validated.model_dump()), comment)
     if (result.problem_topics or result.sentiment in {"mixed", "negative"}) and not result.evidence:
-        raise LLMError("LLM complaint has no matching quote")
+        # Sampling differs between calls: a new attempt usually quotes correctly.
+        raise UnquotedComplaint(result)
     return result
 
 
@@ -357,13 +465,30 @@ def _temporary_error(exc: Exception) -> bool:
     return isinstance(exc, httpx.TransportError)
 
 
+def _unquoted_result(exc: UnquotedComplaint, model: str) -> ProviderResult:
+    # Losing a complaint is worse than showing it without a quote: HR always
+    # sees the original comment. Low confidence marks the missing proof.
+    exc.result.evidence = []
+    exc.result.confidence = min(exc.result.confidence, 0.35)
+    return ProviderResult(result=exc.result, raw={"guard": "no matching quote"}, model=model)
+
+
+def _failure_reason(exc: Exception) -> str:
+    """A diagnosis without response bodies: they may quote the comment."""
+    if isinstance(exc, httpx.HTTPStatusError):
+        return f"HTTP {exc.response.status_code}"
+    return str(exc) if isinstance(exc, LLMError) else type(exc).__name__
+
+
 def _repair_prompt() -> str:
     return (
         "Предыдущий ответ не прошёл проверку. Верни только валидный JSON "
         "со всеми полями схемы, без markdown. evidence — точные подстроки комментария. "
         "Для жалобы нужна хотя бы одна подтверждающая цитата. Проверь оба списка тем: "
-        "workload, tasks, mentorship, team, process, growth, other — исчерпывающий список кодов. "
-        "В частности, доступы — process, поведение коллег — team, условия офиса — other."
+        "workload, tasks, mentorship, team, process, growth, leave, other — исчерпывающий список кодов. "
+        "В частности, доступы — process, поведение коллег — team, условия офиса — other, "
+        "явное намерение уйти, поиск другой работы или оффер в другом месте — leave "
+        "(обычная жалоба без намерения уйти — не leave)."
     )
 
 
@@ -396,17 +521,19 @@ class OpenAICompatibleProvider(BaseProvider):
         with httpx.Client(timeout=self.timeout) as client:
             response = client.post(f"{self.base_url}/chat/completions", headers=headers, json=payload)
             if response.status_code == 400 and json_mode:
-                # Some compatible providers reject response_format.
+                # Some compatible providers reject response_format. Remember it,
+                # so retries and repair rounds do not pay for the failing call again.
+                self._json_mode = False
                 return self._request(messages, json_mode=False)
             response.raise_for_status()
             return response.json()
 
-    def _parse(self, body: dict[str, Any], comment: str) -> tuple[AIResult, str]:
+    def _parse(self, body: dict[str, Any], comment: str, *, strict: bool = True) -> tuple[AIResult, str]:
         try:
             content = body["choices"][0]["message"]["content"]
         except (KeyError, IndexError, TypeError) as exc:
             raise LLMError("Unexpected LLM response") from exc
-        return _parse_remote_result(content, comment), content
+        return _parse_remote_result(content, comment, strict=strict), content
 
     def analyze(
         self,
@@ -429,7 +556,7 @@ class OpenAICompatibleProvider(BaseProvider):
                 except LLMError:
                     repair = {"role": "user", "content": messages[-1]["content"] + "\n" + _repair_prompt()}
                     body = self._request([messages[0], repair], self._json_mode)
-                    result, content = self._parse(body, comment)
+                    result, content = self._parse(body, comment, strict=False)
                 return ProviderResult(
                     result=result,
                     raw={"content": content, "body": body},
@@ -440,7 +567,9 @@ class OpenAICompatibleProvider(BaseProvider):
                 if retryable and attempt < self.max_retries:
                     time.sleep(1.2 * (attempt + 1))
                     continue
-                raise LLMError("LLM request or validation failed", retryable=retryable) from exc
+                if isinstance(exc, UnquotedComplaint):
+                    return _unquoted_result(exc, self.model)
+                raise LLMError(f"LLM request or validation failed: {_failure_reason(exc)}", retryable=retryable) from exc
         raise AssertionError("The initial LLM attempt was skipped")
 
 
@@ -541,6 +670,8 @@ class YandexGPTProvider(BaseProvider):
         headers = {
             "Authorization": f"Api-Key {settings.llm_api_key}",
             "Content-Type": "application/json",
+            # Ask Yandex Cloud not to keep request texts for model training.
+            "x-data-logging-enabled": "false",
         }
         with httpx.Client(timeout=settings.llm_timeout_seconds) as client:
             response = client.post(self.endpoint, headers=headers, json=payload)
@@ -567,7 +698,7 @@ class YandexGPTProvider(BaseProvider):
                     text = body["result"]["alternatives"][0]["message"]["text"]
                 except (KeyError, IndexError, TypeError) as exc:
                     raise LLMError("Unexpected YandexGPT response") from exc
-                result = _parse_remote_result(text, comment)
+                result = _parse_remote_result(text, comment, strict=False)
                 return ProviderResult(
                     result=result,
                     raw={"content": text, "body": body},
@@ -578,7 +709,9 @@ class YandexGPTProvider(BaseProvider):
                 if retryable and attempt < self.max_retries:
                     time.sleep(1.2 * (attempt + 1))
                     continue
-                raise LLMError("YandexGPT request or validation failed", retryable=retryable) from exc
+                if isinstance(exc, UnquotedComplaint):
+                    return _unquoted_result(exc, self.model)
+                raise LLMError(f"YandexGPT request or validation failed: {_failure_reason(exc)}", retryable=retryable) from exc
         raise AssertionError("The initial YandexGPT attempt was skipped")
 
 

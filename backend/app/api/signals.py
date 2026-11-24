@@ -5,7 +5,7 @@ from datetime import date, datetime, timezone
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, StringConstraints
+from pydantic import BaseModel, Field, StringConstraints
 from sqlalchemy import case, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, contains_eager, joinedload, load_only, selectinload
@@ -13,7 +13,9 @@ from sqlalchemy.orm import Session, contains_eager, joinedload, load_only, selec
 from ..auth import can_dashboard_write, require_dashboard_auth, require_dashboard_write
 from ..config import settings
 from ..database import get_db
-from ..models import DEMO_INTERN_STATUS, Answer, Intern, RiskFlag, SignalAction
+from ..models import DEMO_INTERN_STATUS, Answer, Intern, RiskFlag, SignalAction, utcnow
+from ..services.agenda import signal_state, signal_wait
+from ..services.rules import load_rules_config
 from ..services.survey import latest_monthly_answers
 from ..utils import format_period, parse_period
 
@@ -61,6 +63,11 @@ class SignalOut(BaseModel):
     assigned_to: str | None
     history: list[ActionOut]
     next_survey: NextSurvey | None
+    waiting_days: int | None = Field(
+        description="Full days since the signal was created in the system; "
+        "null unless the signal is active and new.",
+    )
+    overdue: bool
 
 
 class InboxOut(BaseModel):
@@ -120,7 +127,10 @@ def _next_surveys(db: Session, flags: list[RiskFlag]) -> dict[int, NextSurvey]:
     return results
 
 
-def _signal_out(flag: RiskFlag, next_survey: NextSurvey | None) -> SignalOut:
+def _signal_out(
+    flag: RiskFlag, next_survey: NextSurvey | None, sla: dict[str, int], now: datetime
+) -> SignalOut:
+    wait = signal_wait(flag, sla, now=now)
     last = flag.actions[-1] if flag.actions else None
     return SignalOut(
         id=flag.id,
@@ -135,7 +145,7 @@ def _signal_out(flag: RiskFlag, next_survey: NextSurvey | None) -> SignalOut:
         explanation=flag.explanation,
         evidence_answer_ids=flag.evidence_answer_ids,
         active=flag.status == "open",
-        state=last.state if last else "new",
+        state=signal_state(flag),
         assigned_to=last.assigned_to if last else None,
         history=[
             ActionOut(
@@ -150,6 +160,8 @@ def _signal_out(flag: RiskFlag, next_survey: NextSurvey | None) -> SignalOut:
             for action in flag.actions
         ],
         next_survey=next_survey,
+        waiting_days=wait.waiting_days,
+        overdue=wait.overdue,
     )
 
 
@@ -209,8 +221,10 @@ def list_signals(
     )
     page = flags[:limit]
     followups = _next_surveys(db, page)
+    sla = load_rules_config()["sla"]
+    now = utcnow()
     return InboxOut(
-        items=[_signal_out(flag, followups.get(flag.id)) for flag in page],
+        items=[_signal_out(flag, followups.get(flag.id), sla, now) for flag in page],
         can_write=can_dashboard_write(actor),
         demo_available=settings.demo_feedback_enabled,
         next_offset=offset + limit if len(flags) > limit else None,
@@ -260,4 +274,6 @@ def update_signal(
             db.rollback()
             raise HTTPException(status_code=409, detail="Сигнал уже изменён. Обновите список.") from exc
 
-    return _signal_out(flag, _next_surveys(db, [flag]).get(flag.id))
+    return _signal_out(
+        flag, _next_surveys(db, [flag]).get(flag.id), load_rules_config()["sla"], utcnow()
+    )

@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import re
-from datetime import date
+from datetime import date, datetime
 from typing import Any
 
 from ..config import settings
-from ..schemas import CanonicalAnswer
+from ..schemas import MOSCOW_TZ, CanonicalAnswer
 from ..utils import parse_period
 
 YANDEX_SOURCES = ("yandex", "yandex_forms", "yandexforms")
@@ -83,6 +83,17 @@ def _find_any(fields: dict[str, str], parts: tuple[str, ...]) -> str:
         if any(part in key for part in parts):
             return value.strip()
     return ""
+
+
+def _period_from_timestamp(value: str) -> date:
+    """Report month of a submission time, in Moscow time (UTC 22:30 on the 31st is already the 1st)."""
+    try:
+        moment = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return parse_period(value[:10])
+    if moment.tzinfo is not None:
+        moment = moment.astimezone(MOSCOW_TZ)
+    return moment.date().replace(day=1)
 
 
 def _number(value: str) -> float | None:
@@ -182,7 +193,7 @@ def parse_yandex_forms(payload: dict[str, Any]) -> CanonicalAnswer:
     if period_raw:
         period = parse_period(period_raw)
     elif created:
-        period = parse_period(str(created)[:10])
+        period = _period_from_timestamp(str(created))
     else:
         period = date.today().replace(day=1)
 

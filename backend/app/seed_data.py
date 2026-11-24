@@ -415,7 +415,7 @@ def generate_seed_files(seed_dir: Path | None = None, force: bool = False) -> Pa
             [
                 {"intern_external_id": "int-001", "name": "Анна Смирнова", "case": "высокая оценка + жалоба на нагрузку", "expected": "R1"},
                 {"intern_external_id": "int-002", "name": "Илья Петров", "case": "стажёр и наставник расходятся", "expected": "R2, R3"},
-                {"intern_external_id": "int-003", "name": "Мария Козлова", "case": "падение оценок", "expected": "R3, R6"},
+                {"intern_external_id": "int-003", "name": "Мария Козлова", "case": "падение оценок, думает о выходе", "expected": "R3, R6, R7"},
                 {"intern_external_id": "int-004", "name": "Дмитрий Волков", "case": "пропущены два опроса", "expected": "R4"},
                 {"intern_external_id": "int-005", "name": "Елена Соколова", "case": "вежливый негатив", "expected": "R1"},
                 {"intern_external_id": "int-006", "name": "Артём Лебедев", "case": "сарказм", "expected": "R1"},

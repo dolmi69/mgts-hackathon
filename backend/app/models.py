@@ -174,6 +174,16 @@ class IngestEvent(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class AuthFailure(Base):
+    """Failed dashboard logins, shared by all API processes and kept across restarts."""
+
+    __tablename__ = "auth_failures"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    client: Mapped[str] = mapped_column(String(64), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+
+
 class SyncRun(Base):
     __tablename__ = "sync_runs"
 

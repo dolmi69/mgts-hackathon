@@ -8,14 +8,20 @@ export async function apiGet(path) {
 }
 
 export async function apiRequest(path, options = {}) {
-  const response = await fetch(path, {
-    ...options,
-    headers: { Accept: "application/json", ...options.headers },
-    credentials: "same-origin",
-    cache: "no-store",
-  });
+  let response;
+  try {
+    response = await fetch(path, {
+      ...options,
+      headers: { Accept: "application/json", ...options.headers },
+      credentials: "same-origin",
+      cache: "no-store",
+    });
+  } catch (_) {
+    // The browser text ("Failed to fetch") means nothing to an HR user.
+    throw apiError("Не удалось связаться с сервером. Проверьте соединение и попробуйте ещё раз.", 0);
+  }
   if (response.status === 401) {
-    throw new Error("Требуется авторизация. Обновите страницу и введите логин и пароль.");
+    throw apiError("Требуется авторизация. Обновите страницу и введите логин и пароль.", 401);
   }
   if (!response.ok) {
     let message = `Ошибка API: ${response.status}`;
@@ -27,9 +33,13 @@ export async function apiRequest(path, options = {}) {
     } catch (_) {
       // keep the status message
     }
-    throw new Error(message);
+    throw apiError(message, response.status);
   }
   return response.json();
+}
+
+function apiError(message, status) {
+  return Object.assign(new Error(message), { status });
 }
 
 export function escapeHtml(value) {
@@ -106,7 +116,7 @@ export function setupChartDefaults(Chart) {
   Chart.defaults.font.family =
     '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif';
   Chart.defaults.font.size = 12;
-  Chart.defaults.color = "#86868b";
+  Chart.defaults.color = "#6e6e73";
   Chart.defaults.plugins.tooltip.backgroundColor = "rgba(29, 29, 31, 0.92)";
   Chart.defaults.plugins.tooltip.titleColor = "#ffffff";
   Chart.defaults.plugins.tooltip.bodyColor = "#f5f5f7";
@@ -122,6 +132,7 @@ export const TOPIC_LABELS = {
   team: "команда",
   process: "процессы",
   growth: "развитие",
+  leave: "намерение уйти",
   other: "другое",
 };
 
@@ -138,14 +149,27 @@ export const SEVERITY_LABELS = {
   low: "наблюдение",
 };
 
-export const RULE_LABELS = {
-  R1: "оценка vs текст",
-  R2: "стажёр vs наставник",
-  R3: "динамика",
-  R4: "пропуск опроса",
-  R5: "повтор проблемы",
-  R6: "низкая оценка",
+// One priority per person, in full words: colour alone must not carry the meaning.
+export const PRIORITY_LABELS = {
+  high: "Высокий приоритет",
+  medium: "Средний приоритет",
+  low: "Наблюдение",
 };
+
+// Same wording as the backend plain reasons, so one signal has one name everywhere.
+export const RULE_LABELS = {
+  R1: "Оценка высокая, но в комментарии есть замечание",
+  R2: "Стажёр и наставник видят месяц по-разному",
+  R3: "Оценки снижаются несколько месяцев",
+  R4: "Не ответил на опрос",
+  R5: "Одна и та же трудность повторяется",
+  R6: "Низкая оценка месяца",
+  R7: "В ответе есть тема ухода",
+};
+
+export function ruleLabel(code) {
+  return RULE_LABELS[code] || "Есть сигнал";
+}
 
 export function topicLabel(topic) {
   return TOPIC_LABELS[topic] || topic || "другое";
@@ -162,11 +186,64 @@ export function severityBadge(severity) {
   return `<span class="badge ${escapeHtml(severity || "neutral")}">${escapeHtml(label)}</span>`;
 }
 
-export function flagChip(flag, withTitle = true) {
-  const severity = flag.severity || "low";
-  const label = SEVERITY_LABELS[severity] || severity;
-  const title = withTitle ? ` title="${escapeHtml(flag.explanation || "")}"` : "";
-  return `<span class="badge ${escapeHtml(severity)}"${title}>${escapeHtml(flag.rule_code)} · ${escapeHtml(label)}</span>`;
+export function priorityBadge(severity) {
+  const known = Object.hasOwn(PRIORITY_LABELS, severity) ? severity : "neutral";
+  return `<span class="badge ${known}">${known === "neutral" ? "Без приоритета" : PRIORITY_LABELS[known]}</span>`;
+}
+
+export function flagChip(flag) {
+  return `<span class="badge ${escapeHtml(flag.severity || "low")}">${escapeHtml(ruleLabel(flag.rule_code))}</span>`;
+}
+
+export function plural(count, one, few, many) {
+  const tens = Math.abs(count) % 100;
+  const units = tens % 10;
+  if (tens > 10 && tens < 20) return many;
+  if (units === 1) return one;
+  return units >= 2 && units <= 4 ? few : many;
+}
+
+export function waitingText(days) {
+  const count = Number(days);
+  if (days === null || days === undefined || !Number.isFinite(count)) return "";
+  if (count < 1) return "появился сегодня";
+  return `ждёт ${count} ${plural(count, "день", "дня", "дней")}`;
+}
+
+// Text, not only colour, says that the signal has waited too long.
+export function waitingBadge(days, overdue) {
+  const text = waitingText(days);
+  if (overdue) return `<span class="badge overdue">Просрочено${text ? ` · ${text}` : ""}</span>`;
+  return text ? `<span class="badge neutral">${text}</span>` : "";
+}
+
+// navigator.clipboard exists only in a secure context (https or localhost).
+export async function copyText(text) {
+  if (navigator.clipboard && window.isSecureContext) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch (_) {
+      // permission denied: try the old way
+    }
+  }
+  const area = document.createElement("textarea");
+  area.value = text;
+  area.className = "visually-hidden";
+  area.setAttribute("readonly", "");
+  area.setAttribute("aria-hidden", "true");
+  document.body.append(area);
+  const previous = document.activeElement;
+  area.select();
+  let copied = false;
+  try {
+    copied = document.execCommand("copy");
+  } catch (_) {
+    copied = false;
+  }
+  area.remove();
+  previous?.focus?.();
+  return copied;
 }
 
 export function topicChips(topics) {

@@ -7,3 +7,7 @@ data/*.db
 data/*.sqlite
 test_app.db
 .env
+.venv/
+*.log
+data/*.db-*
+requirements-dev.txt

@@ -32,3 +32,23 @@ def test_validate_result_drops_invented_evidence():
     validated = _validate_result(result, comment)
     assert validated.evidence == []
     assert validated.confidence <= 0.35
+
+
+def test_mock_detects_intent_to_leave():
+    comment = "Думаю о выходе, ищу другую работу."
+    result = MockProvider().analyze(comment, "intern").result
+    assert "leave" in result.topics
+    assert "leave" in result.problem_topics
+    assert result.sentiment == "negative"
+    assert result.evidence and all(quote in comment for quote in result.evidence)
+
+
+def test_mock_ignores_negated_intent_to_leave():
+    for comment in (
+        "Уходить не собираюсь, всё нравится.",
+        "Не думаю уходить, команда отличная.",
+        "В пятницу ухожу в отпуск.",
+    ):
+        result = MockProvider().analyze(comment, "intern").result
+        assert "leave" not in result.topics, comment
+        assert "leave" not in result.problem_topics, comment

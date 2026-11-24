@@ -39,9 +39,27 @@ class Settings(BaseSettings):
     llm_max_retries: int = 2
     llm_temperature: float = 0.0
     gigachat_base_url: str = "https://api.giga.chat/v1"
-    gigachat_model: str = "GigaChat"
+    gigachat_model: str = "GigaChat-2"
     gigachat_scope: str = "GIGACHAT_API_PERS"
     gigachat_ca_bundle: str = ""
+
+    # Request limits: keep a single client from exhausting memory or LLM budget.
+    max_webhook_bytes: int = 256_000
+    max_import_bytes: int = 10_000_000
+    max_import_rows: int = 20_000
+    max_comment_chars: int = 4_000
+    # Brute-force protection for Basic Auth (per client address).
+    auth_max_failures: int = 10
+    auth_failure_window_seconds: int = 300
+    # Personal data must stay in Russia unless the operator explicitly allows
+    # a cross-border LLM (152-FZ art. 12). Checked outside the dev environment.
+    llm_allow_cross_border: bool = False
+    # Find names outside the roster with Natasha NER (if installed).
+    anonymizer_ner: bool = True
+    # What a webhook does with an intern ID that is not in the roster:
+    # "create" adds the intern (demo convenience), "hold" parks the answer in
+    # ingest_events for HR to map. Empty: create in dev/demo, hold elsewhere.
+    webhook_unknown_interns: str = ""
 
     webhook_secret: str | None = None
     dashboard_user: str | None = None

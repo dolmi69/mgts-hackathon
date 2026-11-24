@@ -1,11 +1,15 @@
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from .config import settings
 from .utils import format_period, parse_period
+
+# Survey times without a zone are local to the program (Moscow has no DST).
+MOSCOW_TZ = timezone(timedelta(hours=3), "MSK")
 
 RespondentType = Literal["intern", "mentor"]
 Sentiment = Literal["positive", "neutral", "mixed", "negative"]
@@ -18,17 +22,21 @@ class Scores(BaseModel):
     mentorship: float | None = Field(default=None, ge=1, le=5)
 
 
+def _as_moscow(value: datetime) -> datetime:
+    return value.replace(tzinfo=MOSCOW_TZ) if value.tzinfo is None else value
+
+
 class CanonicalAnswer(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     source: str = "generic"
     external_answer_id: str = Field(min_length=1, max_length=128)
-    form_id: str | None = None
+    form_id: str | None = Field(default=None, max_length=128)
     period: date
     respondent_type: RespondentType
     intern_external_id: str = Field(min_length=1, max_length=64)
-    mentor_external_id: str | None = None
-    respondent_external_id: str | None = None
+    mentor_external_id: str | None = Field(default=None, max_length=64)
+    respondent_external_id: str | None = Field(default=None, max_length=64)
     scores: Scores
     comment: str = ""
     submitted_at: datetime | None = None
@@ -42,7 +50,8 @@ class CanonicalAnswer(BaseModel):
     @field_validator("comment", mode="before")
     @classmethod
     def _clean_comment(cls, value: object) -> str:
-        return " ".join(str(value or "").split())
+        # Bound storage and LLM cost; a survey comment is never this long.
+        return " ".join(str(value or "").split())[: settings.max_comment_chars]
 
     @field_validator("submitted_at", mode="before")
     @classmethod
@@ -50,16 +59,16 @@ class CanonicalAnswer(BaseModel):
         if value is None or value == "":
             return None
         if isinstance(value, datetime):
-            return value
+            return _as_moscow(value)
         raw = str(value).strip()
         if not raw:
             return None
         try:
-            return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            return _as_moscow(datetime.fromisoformat(raw.replace("Z", "+00:00")))
         except ValueError:
             for fmt in ("%d.%m.%Y %H:%M", "%d.%m.%Y", "%Y-%m-%d %H:%M"):
                 try:
-                    return datetime.strptime(raw, fmt)
+                    return _as_moscow(datetime.strptime(raw, fmt))
                 except ValueError:
                     continue
         raise ValueError(f"unsupported datetime format: {value!r}")
@@ -145,6 +154,30 @@ class FlagOut(BaseModel):
     status: str
 
 
+class AgendaItem(BaseModel):
+    rule_code: str
+    question: str
+    why: str
+
+
+class FocusItem(BaseModel):
+    """One intern to look at first; state and waiting describe ``signal_id``."""
+
+    intern_id: int
+    name: str
+    mentor_name: str | None = None
+    severity: Severity
+    main_reason: str
+    reasons: list[str] = Field(default_factory=list)
+    signal_id: int
+    state: Literal["new", "in_progress"]
+    waiting_days: int | None = Field(
+        default=None,
+        description="Full days since the signal was created in the system; null once taken.",
+    )
+    overdue: bool = False
+
+
 class SeriesPoint(BaseModel):
     period: date
     period_label: str
@@ -186,8 +219,23 @@ class InternSummary(BaseModel):
     avg_score: float | None = None
     trend: float | None = None
     flags: list[FlagOut] = Field(default_factory=list)
+    priority: Severity | None = None
+    main_reason: str | None = None
     analysis_status: str
     last_period: date | None = None
+
+
+class MentorSummary(BaseModel):
+    id: int
+    name: str
+    interns_total: int
+    interns_with_flags: int
+    interns_with_high: int
+    share_with_flags: float
+    mentor_responded: int
+    avg_intern_score: float | None = None
+    flagged_intern_ids: list[int] = Field(default_factory=list)
+    needs_attention: bool = False
 
 
 class DashboardSummary(BaseModel):
@@ -199,6 +247,8 @@ class DashboardSummary(BaseModel):
     dynamics: list[DynamicsPoint] = Field(default_factory=list)
     top_topics: list[TopicCount] = Field(default_factory=list)
     interns: list[InternSummary] = Field(default_factory=list)
+    mentors: list[MentorSummary] = Field(default_factory=list)
+    focus: list[FocusItem] = Field(default_factory=list)
 
 
 class InternStats(BaseModel):
@@ -223,11 +273,13 @@ class InternCard(BaseModel):
     series: list[SeriesPoint] = Field(default_factory=list)
     answers: list[AnswerOut] = Field(default_factory=list)
     flags: list[FlagOut] = Field(default_factory=list)
+    agenda: list[AgendaItem] = Field(default_factory=list)
 
 
 class PeriodOut(BaseModel):
     period: date
     label: str
+    has_answers: bool = True
 
 
 class CalendarCounts(BaseModel):
@@ -296,7 +348,7 @@ class ReanalyzeResult(BaseModel):
 class HealthOut(BaseModel):
     status: str
     db: str
-    llm_provider: str
+    llm_provider: str | None = None
     app: str
 
 

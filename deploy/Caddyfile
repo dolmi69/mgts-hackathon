@@ -1,25 +1,55 @@
+{
+	# The admin API is not needed at runtime.
+	admin off
+}
+
 # Local: DOMAIN=http://localhost
 # Production: DOMAIN=demo.example.ru and DNS A/AAAA records must point to this host.
 {$DOMAIN:http://localhost} {
-    encode gzip
+	encode gzip
 
-    # Optional: restrict webhook by Yandex Forms source network.
-    # @webhook {
-    #     path /api/webhooks/*
-    #     remote_ip 2a02:6b8:c00::/40
-    # }
-    # handle @webhook {
-    #     reverse_proxy api:8000
-    # }
+	header {
+		Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "same-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		# Browsers ignore HSTS over plain HTTP, so this is safe for localhost too.
+		Strict-Transport-Security "max-age=31536000"
+		-Server
+	}
 
-    @api path /api/* /docs /docs/* /openapi.json /redoc /redoc/*
-    handle @api {
-        reverse_proxy api:8000
-    }
+	# Body limits before anything reaches the API (the app enforces the same).
+	@webhook path /api/webhooks/*
+	request_body @webhook {
+		max_size 256KB
+	}
+	@import path /api/import/*
+	request_body @import {
+		max_size 10MB
+	}
 
-    handle {
-        root * /srv/frontend
-        try_files {path} /index.html
-        file_server
-    }
+	# Optional: accept webhooks only from the Yandex Forms network (IPv6).
+	# @foreign_webhook {
+	#     path /api/webhooks/*
+	#     not remote_ip 2a02:6b8:c00::/40
+	# }
+	# respond @foreign_webhook 403
+
+	# The API map is closed outside local development.
+	@docs path /docs /docs/* /openapi.json /redoc /redoc/*
+	handle @docs {
+		respond 404
+	}
+
+	@api path /api/*
+	handle @api {
+		reverse_proxy api:8000
+	}
+
+	handle {
+		root * /srv/frontend
+		try_files {path} /index.html
+		file_server
+	}
 }
