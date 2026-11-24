@@ -28,5 +28,9 @@
   "mentors": {
     "attention_share": 0.75,
     "min_interns": 2
+  },
+  "sla": {
+    "high_days": 3,
+    "medium_days": 7
   }
 }

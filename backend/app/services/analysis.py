@@ -233,7 +233,9 @@ def analyze_answer_by_id(
         except Exception as exc:  # Keep provider details and user text out of diagnostics.
             db.rollback()
             retryable = isinstance(exc, LLMError) and exc.retryable
-            logger.warning("Analysis attempt failed for answer %s (%s)", answer_id, type(exc).__name__)
+            # LLMError texts are ours and carry no survey text; other errors may.
+            reason = str(exc) if isinstance(exc, LLMError) else type(exc).__name__
+            logger.warning("Analysis attempt failed for answer %s (%s)", answer_id, reason)
         model = provider_model_name(provider) if provider else settings.llm_provider
         return _finish_claim(db, answer_id, token, result, retryable=retryable, model=model)
 

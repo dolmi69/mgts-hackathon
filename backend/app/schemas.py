@@ -154,6 +154,30 @@ class FlagOut(BaseModel):
     status: str
 
 
+class AgendaItem(BaseModel):
+    rule_code: str
+    question: str
+    why: str
+
+
+class FocusItem(BaseModel):
+    """One intern to look at first; state and waiting describe ``signal_id``."""
+
+    intern_id: int
+    name: str
+    mentor_name: str | None = None
+    severity: Severity
+    main_reason: str
+    reasons: list[str] = Field(default_factory=list)
+    signal_id: int
+    state: Literal["new", "in_progress"]
+    waiting_days: int | None = Field(
+        default=None,
+        description="Full days since the signal was created in the system; null once taken.",
+    )
+    overdue: bool = False
+
+
 class SeriesPoint(BaseModel):
     period: date
     period_label: str
@@ -195,6 +219,8 @@ class InternSummary(BaseModel):
     avg_score: float | None = None
     trend: float | None = None
     flags: list[FlagOut] = Field(default_factory=list)
+    priority: Severity | None = None
+    main_reason: str | None = None
     analysis_status: str
     last_period: date | None = None
 
@@ -222,6 +248,7 @@ class DashboardSummary(BaseModel):
     top_topics: list[TopicCount] = Field(default_factory=list)
     interns: list[InternSummary] = Field(default_factory=list)
     mentors: list[MentorSummary] = Field(default_factory=list)
+    focus: list[FocusItem] = Field(default_factory=list)
 
 
 class InternStats(BaseModel):
@@ -246,11 +273,13 @@ class InternCard(BaseModel):
     series: list[SeriesPoint] = Field(default_factory=list)
     answers: list[AnswerOut] = Field(default_factory=list)
     flags: list[FlagOut] = Field(default_factory=list)
+    agenda: list[AgendaItem] = Field(default_factory=list)
 
 
 class PeriodOut(BaseModel):
     period: date
     label: str
+    has_answers: bool = True
 
 
 class CalendarCounts(BaseModel):

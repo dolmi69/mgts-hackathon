@@ -10,6 +10,7 @@
   <link rel="stylesheet" href="css/app.css">
 </head>
 <body>
+  <a class="skip-link" href="#main">К содержанию</a>
   <header class="topbar">
     <div class="container topbar-inner">
       <a class="brand" href="index.html">
@@ -19,32 +20,54 @@
           <small>ИИ размечает текст, решение принимает HR</small>
         </span>
       </a>
-      <div class="topbar-meta">
-        <span id="as-of">Данные загружаются…</span>
-        <a id="demo-feedback-link" href="feedback.html" hidden>Демо-анкета</a>
-      </div>
+      <nav class="main-nav" aria-label="Основные разделы">
+        <a href="index.html" aria-current="page">Главная</a>
+        <a href="signals.html">Входящие HR</a>
+        <a href="program.html">Календарь и темы</a>
+      </nav>
     </div>
   </header>
 
-  <main class="container page">
-    <nav class="workspace-nav" aria-label="Разделы программы">
-      <a href="signals.html">Входящие HR</a>
-      <a href="program.html">Календарь и темы</a>
-    </nav>
+  <main id="main" class="container page" tabindex="-1">
     <section class="page-head">
       <div>
-        <p class="eyebrow">Программа стажировок</p>
         <h1>Кому уделить внимание</h1>
-        <p class="lede">Короткий список на месяц: у кого есть сигнал, какое правило сработало и на каких ответах это основано.</p>
+        <p class="lede">Кто из стажёров ждёт разговора, почему и что сделать.</p>
       </div>
       <div class="controls">
-        <label for="period-select">Месяц</label>
-        <select id="period-select" aria-label="Выберите месяц"></select>
-        <button id="refresh" class="button" type="button">Обновить</button>
+        <label for="period-select">Месяц
+          <select id="period-select"></select>
+        </label>
+        <button id="refresh" class="button button-secondary" type="button">Обновить</button>
       </div>
     </section>
 
     <div id="error" class="alert" role="alert" hidden></div>
+
+    <section id="focus" class="card focus-card" aria-labelledby="focus-heading" hidden>
+      <header class="card-head">
+        <div>
+          <h2 id="focus-heading">Что сделать сегодня</h2>
+          <p id="focus-hint" class="muted">Начните с верхнего имени: откройте карточку и возьмите сигнал в работу.</p>
+        </div>
+        <a class="head-link" href="signals.html">Все сигналы</a>
+      </header>
+      <ol id="focus-list" class="focus-list"></ol>
+      <div id="focus-empty" class="focus-empty" hidden></div>
+    </section>
+    <p id="focus-status" class="visually-hidden" role="status" aria-live="polite"></p>
+
+    <details class="card how-card">
+      <summary>Как это работает</summary>
+      <ol class="how-steps">
+        <li><strong>Стажёры и наставники отвечают на анкету.</strong> Раз в месяц: оценки и комментарий.</li>
+        <li><strong>Система находит, на что обратить внимание.</strong> ИИ размечает комментарии, а понятные правила сравнивают оценки, текст и пропуски.</li>
+        <li><strong>Решаете вы.</strong> Возьмите сигнал в работу, поговорите с человеком и запишите итог во «Входящих HR».</li>
+      </ol>
+    </details>
+
+    <p class="data-note"><span id="as-of" class="muted">Данные загружаются…</span>
+      <a id="demo-feedback-link" href="feedback.html" hidden>Демо-анкета</a></p>
 
     <section id="kpis" class="kpi-grid" aria-label="Показатели программы"></section>
 
@@ -56,7 +79,7 @@
             <p class="muted">Средние оценки стажёров и наставников по месяцам</p>
           </div>
         </header>
-        <div class="chart-wrap"><canvas id="dynamics-chart" aria-label="График динамики оценок"></canvas></div>
+        <div class="chart-wrap"><canvas id="dynamics-chart" role="img" aria-label="График динамики оценок"></canvas></div>
       </article>
 
       <article class="card">
@@ -66,7 +89,7 @@
             <p class="muted">Темы, на которые жалуются в комментариях</p>
           </div>
         </header>
-        <div class="chart-wrap"><canvas id="topics-chart" aria-label="График частых проблем"></canvas></div>
+        <div class="chart-wrap"><canvas id="topics-chart" role="img" aria-label="График частых проблем"></canvas></div>
         <div id="topics-empty" class="empty" hidden>За этот месяц жалоб в комментариях нет.</div>
       </article>
     </section>
@@ -75,23 +98,23 @@
       <header class="card-head table-head">
         <div>
           <h2>Стажёры</h2>
-          <p class="muted">Сначала те, у кого высокий сигнал. Нажмите на имя, чтобы увидеть источник.</p>
+          <p class="muted">Сначала самые важные. Нажмите на имя, чтобы открыть карточку с ответами.</p>
         </div>
-        <div class="legend" aria-label="Легенда серьёзности">
-          <span><i class="dot high"></i> высокий</span>
+        <div class="legend" role="group" aria-label="Что означают цвета">
+          <span><i class="dot high"></i> высокий приоритет</span>
           <span><i class="dot medium"></i> средний</span>
           <span><i class="dot low"></i> наблюдение</span>
         </div>
       </header>
       <div class="table-scroll">
-        <table class="interns-table">
+        <table class="interns-table" aria-label="Стажёры за месяц">
           <thead>
             <tr>
-              <th>Стажёр</th>
-              <th>Наставник</th>
-              <th>Оценка</th>
-              <th>Сигналы</th>
-              <th>Анализ</th>
+              <th scope="col">Стажёр</th>
+              <th scope="col">Наставник</th>
+              <th scope="col">Оценка</th>
+              <th scope="col">Почему обратить внимание</th>
+              <th scope="col">Разбор ИИ</th>
             </tr>
           </thead>
           <tbody id="interns-body"></tbody>
@@ -108,14 +131,14 @@
         </div>
       </header>
       <div class="table-scroll">
-        <table class="mentors-table">
+        <table class="mentors-table" aria-label="Наставники за месяц">
           <thead>
             <tr>
-              <th>Наставник</th>
-              <th>Стажёры с сигналами</th>
-              <th>Заполнил анкет</th>
-              <th>Оценка стажёров</th>
-              <th>Что сделать</th>
+              <th scope="col">Наставник</th>
+              <th scope="col">Стажёры с сигналами</th>
+              <th scope="col">Заполнил анкет</th>
+              <th scope="col">Оценка стажёров</th>
+              <th scope="col">Что сделать</th>
             </tr>
           </thead>
           <tbody id="mentors-body"></tbody>
@@ -125,8 +148,8 @@
     </section>
 
     <p class="footnote">
-      Флажок — это не решение о человеке, а повод посмотреть исходный ответ.
-      ИИ размечает только комментарии; правила риска считаются по оценкам, тексту и пропускам.
+      Сигнал — это не решение о человеке, а повод посмотреть исходный ответ и поговорить.
+      ИИ размечает только комментарии; сигналы считаются по оценкам, тексту и пропускам.
     </p>
   </main>
 

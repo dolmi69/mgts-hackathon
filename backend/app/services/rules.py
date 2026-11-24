@@ -31,6 +31,9 @@ DEFAULT_RULES: dict[str, Any] = {
     "r6": {"low_score": 2.0, "enabled": True},
     "r7": {"enabled": True},
     "mentors": {"attention_share": 0.75, "min_interns": 2},
+    # Full days a new signal may wait for HR, counted from the moment the
+    # signal was created in the system. "low" signals have no deadline.
+    "sla": {"high_days": 3, "medium_days": 7},
 }
 
 TOPIC_LABELS = {

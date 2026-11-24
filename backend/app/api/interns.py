@@ -8,7 +8,6 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from ..auth import require_dashboard_auth, require_dashboard_write
-from ..config import settings
 from ..database import SessionLocal, get_db
 from ..models import AIAnalysis, AnalysisJob, Answer, Intern, RiskFlag, utcnow
 from ..schemas import ReanalyzeResult
@@ -67,10 +66,9 @@ def reanalyze_intern(
 
     queued = reset_analysis_for_intern(db, intern_id)
     if queued:
-        if settings.analyze_in_background:
-            background_tasks.add_task(_run_batch, intern_id)
-        else:
-            _run_batch(intern_id)
+        # Never inside the request: a real model takes seconds per answer. The
+        # lease keeps the worker and this task from doing the same answer twice.
+        background_tasks.add_task(_run_batch, intern_id)
     return ReanalyzeResult(queued=queued, flags=_open_flags(db, intern_id))
 
 
@@ -91,10 +89,9 @@ def retry_answer(
 
     queued = reset_analysis_for_intern(db, intern_id, answer_id)
     if queued:
-        if settings.analyze_in_background:
-            background_tasks.add_task(_run_one, answer_id)
-        else:
-            _run_one(answer_id)
+        # Never inside the request: a real model takes seconds per answer. The
+        # lease keeps the worker and this task from doing the same answer twice.
+        background_tasks.add_task(_run_one, answer_id)
     return ReanalyzeResult(queued=queued, flags=_open_flags(db, intern_id))
 
 

@@ -2,6 +2,7 @@ import {
   analysisStatus,
   apiGet,
   apiRequest,
+  copyText,
   escapeHtml,
   flagChip,
   formatAverage,
@@ -9,8 +10,9 @@ import {
   formatDateTime,
   formatPeriod,
   formatScore,
-  hideError,
   initials,
+  plural,
+  priorityBadge,
   sentimentBadge,
   setupChartDefaults,
   showError,
@@ -31,6 +33,10 @@ function cacheElements() {
   els.timeline = document.getElementById("timeline");
   els.chart = document.getElementById("score-chart");
   els.inbox = document.getElementById("intern-inbox-link");
+  els.agenda = document.getElementById("agenda");
+  els.agendaList = document.getElementById("agenda-list");
+  els.agendaCopy = document.getElementById("agenda-copy");
+  els.agendaStatus = document.getElementById("agenda-status");
 }
 
 function stat(value, label) {
@@ -59,9 +65,40 @@ function renderProfile(card) {
   ].join("");
 }
 
+function renderAgenda(card) {
+  const items = card.agenda || [];
+  els.agenda.hidden = !items.length;
+  els.agendaStatus.textContent = "";
+  els.agendaList.innerHTML = items
+    .map(
+      (item) => `
+        <li>
+          <p class="agenda-question">${escapeHtml(item.question)}</p>
+          <p class="agenda-why">Почему: ${escapeHtml(item.why)}
+            <small>правило ${escapeHtml(item.rule_code)}</small></p>
+        </li>`
+    )
+    .join("");
+}
+
+async function copyAgenda() {
+  const lines = state.card.agenda.map(
+    (item, index) => `${index + 1}. ${item.question}\n   Почему: ${item.why}`
+  );
+  const text = [
+    `О чём поговорить на встрече: ${state.card.name}`,
+    ...lines,
+    "Это подсказки для разговора. Решение принимает HR.",
+  ].join("\n");
+  els.agendaStatus.textContent = "";
+  els.agendaStatus.textContent = (await copyText(text))
+    ? "Скопировано. Вставьте текст в письмо или заметку."
+    : "Не удалось скопировать автоматически. Выделите вопросы и скопируйте вручную (Ctrl+C).";
+}
+
 function renderFlags(card) {
   if (!card.flags.length) {
-    els.flagsHint.textContent = "Каждый флажок объяснён и связан с ответом";
+    els.flagsHint.textContent = "Каждый сигнал объяснён и связан с ответом";
     els.flags.innerHTML =
       '<div class="flags-ok">Сигналов нет. Это не значит «всё идеально», это значит, что данные не расходятся между собой.</div>';
     return;
@@ -69,8 +106,8 @@ function renderFlags(card) {
   const scrollable =
     card.flags.length > 2 && window.matchMedia("(min-width: 981px)").matches;
   els.flagsHint.textContent = scrollable
-    ? `${card.flags.length} сигналов · прокрутите, чтобы увидеть все`
-    : "Каждый флажок объяснён и связан с ответом";
+    ? `Всего ${card.flags.length} ${plural(card.flags.length, "сигнал", "сигнала", "сигналов")} · прокрутите, чтобы увидеть все`
+    : "Каждый сигнал объяснён и связан с ответом";
   els.flags.innerHTML = card.flags
     .map((flag) => {
       const links = (flag.evidence_answer_ids || [])
@@ -82,12 +119,12 @@ function renderFlags(card) {
       return `
         <article class="flag-card ${escapeHtml(flag.severity)}">
           <div class="flag-head">
-            ${flagChip(flag, false)}
+            ${priorityBadge(flag.severity)}
             <span class="small muted">${escapeHtml(flag.period_label)}</span>
           </div>
           <h3>${escapeHtml(flag.title)}</h3>
           <p>${escapeHtml(flag.explanation)}</p>
-          ${links ? `<p class="flag-source">Источник: ${links}</p>` : ""}
+          <p class="flag-source">${links ? `Источник: ${links} · ` : ""}правило ${escapeHtml(flag.rule_code)}</p>
         </article>
       `;
     })
@@ -169,12 +206,12 @@ function renderChart(card) {
         y: {
           min: 1,
           max: 5,
-          ticks: { stepSize: 1, color: "#86868b" },
+          ticks: { stepSize: 1, color: "#6e6e73" },
           grid: { color: "#f0f0f2" },
           border: { display: false },
         },
         x: {
-          ticks: { color: "#86868b", maxRotation: 0, autoSkip: true },
+          ticks: { color: "#6e6e73", maxRotation: 0, autoSkip: true },
           grid: { display: false },
           border: { display: false },
         },
@@ -316,6 +353,7 @@ function renderTimeline(card) {
 function render(card) {
   state.card = card;
   renderProfile(card);
+  renderAgenda(card);
   renderFlags(card);
   renderChart(card);
   renderTimeline(card);
@@ -356,6 +394,7 @@ async function retryAnalysis(event) {
 async function init() {
   cacheElements();
   els.timeline.addEventListener("click", retryAnalysis);
+  els.agendaCopy.addEventListener("click", copyAgenda);
   const id = new URLSearchParams(window.location.search).get("id");
   if (!id || !/^\d+$/.test(id)) {
     showError(els.error, "Не указан стажёр. Вернитесь к списку и выберите карточку.");

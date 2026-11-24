@@ -274,3 +274,44 @@ def test_worker_refuses_foreign_llm(monkeypatch):
     with pytest.raises(RuntimeError, match="abroad"):
         worker.main()
     assert started == []
+
+
+def test_complaint_survives_when_the_model_cannot_quote_it(monkeypatch):
+    import json
+
+    from app.services import llm
+
+    monkeypatch.setattr(settings, "llm_api_key", "test")
+    monkeypatch.setattr(settings, "llm_max_retries", 1)
+    monkeypatch.setattr(llm.time, "sleep", lambda _seconds: None)
+    answer = {
+        "sentiment": "neutral", "topics": ["process"], "problem_topics": ["process"],
+        "summary": "Жалоба на доступы.", "evidence": ["этого нет в тексте"], "confidence": 0.9,
+    }
+    calls = []
+
+    def request(_self, _messages, _json_mode):
+        calls.append(1)
+        return {"choices": [{"message": {"content": json.dumps(answer)}}], "model": "fake"}
+
+    monkeypatch.setattr(llm.OpenAICompatibleProvider, "_request", request)
+    result = llm.OpenAICompatibleProvider().analyze("Доступы не выдали третью неделю.", "intern").result
+    assert len(calls) == 4  # two attempts, each with one repair round
+    assert result.problem_topics == ["process"] and result.sentiment == "mixed"
+    assert result.evidence == [] and result.confidence <= 0.35
+
+
+def test_invented_topic_becomes_other_after_failed_repair(monkeypatch):
+    import json
+
+    from app.services import llm
+
+    comment = "Рекомендую всем, но кофемашина сломана вторую неделю."
+    body = {
+        "sentiment": "mixed", "topics": ["кофе", "team"], "problem_topics": ["кофе"],
+        "summary": "Сломана кофемашина.", "evidence": ["кофемашина сломана вторую неделю"], "confidence": 0.9,
+    }
+    with pytest.raises(llm.LLMError, match="unknown topics"):
+        llm._parse_remote_result(json.dumps(body), comment)
+    result = llm._parse_remote_result(json.dumps(body), comment, strict=False)
+    assert result.problem_topics == ["other"] and set(result.topics) == {"team", "other"}

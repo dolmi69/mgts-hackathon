@@ -39,7 +39,7 @@ class Settings(BaseSettings):
     llm_max_retries: int = 2
     llm_temperature: float = 0.0
     gigachat_base_url: str = "https://api.giga.chat/v1"
-    gigachat_model: str = "GigaChat"
+    gigachat_model: str = "GigaChat-2"
     gigachat_scope: str = "GIGACHAT_API_PERS"
     gigachat_ca_bundle: str = ""
 

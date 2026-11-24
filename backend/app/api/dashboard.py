@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict
-from datetime import date
+from datetime import date, datetime
 from statistics import mean
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -11,12 +11,13 @@ from sqlalchemy.orm import Session, selectinload
 from ..auth import can_dashboard_write, require_dashboard_auth
 from ..config import settings
 from ..database import get_db
-from ..models import DEMO_INTERN_STATUS, Answer, Intern, RiskFlag
+from ..models import DEMO_INTERN_STATUS, Answer, Intern, RiskFlag, utcnow
 from ..schemas import (
     DashboardSummary,
     CalendarCounts,
     CalendarDirection,
     DynamicsPoint,
+    FocusItem,
     InternCard,
     InternStats,
     InternSummary,
@@ -32,6 +33,7 @@ from ..schemas import (
     build_answer_out,
     build_flag_out,
 )
+from ..services.agenda import build_agenda, plain_reason, signal_state, signal_wait, rule_rank
 from ..services.rules import load_rules_config
 from ..services.survey import (
     expected_periods,
@@ -99,13 +101,19 @@ def _selected_period(db: Session, period: str | None) -> date:
             return parse_period(period)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-    available = _periods(db)
+    # Later months may be listed only because someone is still enrolled.
+    observed = set().union(*_observed_periods(db).values())
+    available = sorted(observed, reverse=True) or _periods(db)
     return available[0] if available else date.today().replace(day=1)
 
 
 @router.get("/api/periods", response_model=list[PeriodOut])
 def list_periods(db: Session = Depends(get_db)) -> list[PeriodOut]:
-    return [PeriodOut(period=period, label=format_period(period)) for period in _periods(db)]
+    observed = set().union(*_observed_periods(db).values())
+    return [
+        PeriodOut(period=period, label=format_period(period), has_answers=period in observed)
+        for period in _periods(db)
+    ]
 
 
 @router.get("/api/dashboard/summary", response_model=DashboardSummary)
@@ -134,6 +142,7 @@ def dashboard_summary(
                 RiskFlag.status == "open",
                 Intern.status != DEMO_INTERN_STATUS,
             )
+            .options(selectinload(RiskFlag.actions))
         ).all()
     )
     by_slot = latest_monthly_answers(answers)
@@ -186,7 +195,7 @@ def dashboard_summary(
             analysis_status = "none"
         intern_flags = sorted(
             flags_by_intern.get(intern.id, []),
-            key=lambda flag: (severity_rank(flag.severity), flag.rule_code),
+            key=lambda flag: (severity_rank(flag.severity), rule_rank(flag.rule_code)),
         )
         summaries.append(
             InternSummary(
@@ -198,6 +207,8 @@ def dashboard_summary(
                 avg_score=current_score,
                 trend=trend,
                 flags=[build_flag_out(flag) for flag in intern_flags],
+                priority=intern_flags[0].severity if intern_flags else None,
+                main_reason=plain_reason(intern_flags[0]) if intern_flags else None,
                 analysis_status=analysis_status,
                 last_period=max(observed[intern.id], default=None),
             )
@@ -263,7 +274,72 @@ def dashboard_summary(
         top_topics=top_topics,
         interns=summaries,
         mentors=mentors,
+        focus=_focus_items(interns, flags_by_intern, config["sla"], utcnow()),
     )
+
+
+MAX_FOCUS_ITEMS = 5
+
+
+def _longest_wait_first(days: int | None) -> int:
+    return 1 if days is None else -days
+
+
+def _focus_items(
+    interns: list[Intern],
+    flags_by_intern: dict[int, list[RiskFlag]],
+    sla: dict[str, int],
+    now: datetime,
+) -> list[FocusItem]:
+    """Interns with signals HR has not finished with, the most urgent first."""
+    items: list[FocusItem] = []
+    leaving: set[int] = set()
+    for intern in interns:
+        pending = [
+            (flag, signal_wait(flag, sla, now=now))
+            for flag in flags_by_intern.get(intern.id, [])
+            if flag.severity in {"high", "medium"} and signal_state(flag) != "reviewed"
+        ]
+        if not pending:
+            continue
+        # Of equally severe signals show the one that has waited longest, so a
+        # signal already in progress does not hide one nobody has taken.
+        pending.sort(
+            key=lambda pair: (
+                severity_rank(pair[0].severity),
+                _longest_wait_first(pair[1].waiting_days),
+                rule_rank(pair[0].rule_code),
+            )
+        )
+        flag, wait = pending[0]
+        if any(item.rule_code == "R7" for item, _ in pending):
+            leaving.add(intern.id)
+        items.append(
+            FocusItem(
+                intern_id=intern.id,
+                name=intern.name,
+                mentor_name=intern.mentor.name if intern.mentor else None,
+                severity=flag.severity,
+                main_reason=plain_reason(flag),
+                reasons=list(dict.fromkeys(plain_reason(item) for item, _ in pending)),
+                signal_id=flag.id,
+                state=signal_state(flag),
+                waiting_days=wait.waiting_days,
+                overdue=wait.overdue,
+            )
+        )
+    # A person's own words about leaving come before other equally urgent signals.
+    items.sort(
+        key=lambda item: (
+            not item.overdue,
+            severity_rank(item.severity),
+            item.intern_id not in leaving,
+            _longest_wait_first(item.waiting_days),
+            item.name,
+            item.intern_id,
+        )
+    )
+    return items[:MAX_FOCUS_ITEMS]
 
 
 def _mentor_summaries(
@@ -465,7 +541,9 @@ def intern_card(
         select(RiskFlag).where(RiskFlag.intern_id == intern_id, RiskFlag.status == "open")
     ).all())
     flags.sort(
-        key=lambda flag: (flag.period, -severity_rank(flag.severity)), reverse=True
+        key=lambda flag: (
+            -flag.period.toordinal(), severity_rank(flag.severity), rule_rank(flag.rule_code)
+        )
     )
 
     by_slot = latest_monthly_answers(answers)
@@ -519,4 +597,5 @@ def intern_card(
             for answer in answers
         ],
         flags=[build_flag_out(flag) for flag in flags],
+        agenda=build_agenda(flag for flag in flags if flag.period == flags[0].period),
     )

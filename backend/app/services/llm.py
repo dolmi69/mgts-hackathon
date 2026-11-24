@@ -29,6 +29,14 @@ class LLMError(RuntimeError):
         self.retryable = retryable
 
 
+class UnquotedComplaint(LLMError):
+    """The labels are valid, but no quote confirms the complaint."""
+
+    def __init__(self, result: AIResult) -> None:
+        super().__init__("LLM complaint has no matching quote", retryable=True)
+        self.result = result
+
+
 @dataclass
 class ProviderResult:
     result: AIResult
@@ -422,18 +430,30 @@ class _RemoteResult(BaseModel):
     confidence: float = Field(ge=0, le=1)
 
 
-def _parse_remote_result(text: str, comment: str) -> AIResult:
+def _parse_remote_result(text: str, comment: str, *, strict: bool = True) -> AIResult:
     try:
         validated = _RemoteResult.model_validate(_extract_json(text))
     except ValidationError as exc:
         raise LLMError("LLM response does not match the required schema") from exc
+    if not strict:
+        # The repair round did not help. An invented code must not lose the
+        # whole answer, nor reach the UI: a complaint becomes "other".
+        known = lambda codes: list(dict.fromkeys(code if code in TOPIC_LABELS else "other" for code in codes))  # noqa: E731
+        validated.problem_topics = known(validated.problem_topics)
+        validated.topics = list(dict.fromkeys(
+            [code for code in validated.topics if code in TOPIC_LABELS] + validated.problem_topics
+        ))
     if set(validated.topics) - TOPIC_LABELS.keys():
         raise LLMError("LLM response contains unknown topics")
     if set(validated.problem_topics) - set(validated.topics):
         raise LLMError("LLM response lists a problem absent from its topics")
+    if validated.problem_topics and validated.sentiment in {"positive", "neutral"}:
+        # The model found a complaint, so the tone cannot be complaint-free.
+        validated.sentiment = "mixed"
     result = _validate_result(AIResult.model_validate(validated.model_dump()), comment)
     if (result.problem_topics or result.sentiment in {"mixed", "negative"}) and not result.evidence:
-        raise LLMError("LLM complaint has no matching quote")
+        # Sampling differs between calls: a new attempt usually quotes correctly.
+        raise UnquotedComplaint(result)
     return result
 
 
@@ -443,6 +463,21 @@ def _temporary_error(exc: Exception) -> bool:
     if isinstance(exc, httpx.HTTPStatusError):
         return exc.response.status_code == 429 or 500 <= exc.response.status_code < 600
     return isinstance(exc, httpx.TransportError)
+
+
+def _unquoted_result(exc: UnquotedComplaint, model: str) -> ProviderResult:
+    # Losing a complaint is worse than showing it without a quote: HR always
+    # sees the original comment. Low confidence marks the missing proof.
+    exc.result.evidence = []
+    exc.result.confidence = min(exc.result.confidence, 0.35)
+    return ProviderResult(result=exc.result, raw={"guard": "no matching quote"}, model=model)
+
+
+def _failure_reason(exc: Exception) -> str:
+    """A diagnosis without response bodies: they may quote the comment."""
+    if isinstance(exc, httpx.HTTPStatusError):
+        return f"HTTP {exc.response.status_code}"
+    return str(exc) if isinstance(exc, LLMError) else type(exc).__name__
 
 
 def _repair_prompt() -> str:
@@ -493,12 +528,12 @@ class OpenAICompatibleProvider(BaseProvider):
             response.raise_for_status()
             return response.json()
 
-    def _parse(self, body: dict[str, Any], comment: str) -> tuple[AIResult, str]:
+    def _parse(self, body: dict[str, Any], comment: str, *, strict: bool = True) -> tuple[AIResult, str]:
         try:
             content = body["choices"][0]["message"]["content"]
         except (KeyError, IndexError, TypeError) as exc:
             raise LLMError("Unexpected LLM response") from exc
-        return _parse_remote_result(content, comment), content
+        return _parse_remote_result(content, comment, strict=strict), content
 
     def analyze(
         self,
@@ -521,7 +556,7 @@ class OpenAICompatibleProvider(BaseProvider):
                 except LLMError:
                     repair = {"role": "user", "content": messages[-1]["content"] + "\n" + _repair_prompt()}
                     body = self._request([messages[0], repair], self._json_mode)
-                    result, content = self._parse(body, comment)
+                    result, content = self._parse(body, comment, strict=False)
                 return ProviderResult(
                     result=result,
                     raw={"content": content, "body": body},
@@ -532,7 +567,9 @@ class OpenAICompatibleProvider(BaseProvider):
                 if retryable and attempt < self.max_retries:
                     time.sleep(1.2 * (attempt + 1))
                     continue
-                raise LLMError("LLM request or validation failed", retryable=retryable) from exc
+                if isinstance(exc, UnquotedComplaint):
+                    return _unquoted_result(exc, self.model)
+                raise LLMError(f"LLM request or validation failed: {_failure_reason(exc)}", retryable=retryable) from exc
         raise AssertionError("The initial LLM attempt was skipped")
 
 
@@ -661,7 +698,7 @@ class YandexGPTProvider(BaseProvider):
                     text = body["result"]["alternatives"][0]["message"]["text"]
                 except (KeyError, IndexError, TypeError) as exc:
                     raise LLMError("Unexpected YandexGPT response") from exc
-                result = _parse_remote_result(text, comment)
+                result = _parse_remote_result(text, comment, strict=False)
                 return ProviderResult(
                     result=result,
                     raw={"content": text, "body": body},
@@ -672,7 +709,9 @@ class YandexGPTProvider(BaseProvider):
                 if retryable and attempt < self.max_retries:
                     time.sleep(1.2 * (attempt + 1))
                     continue
-                raise LLMError("YandexGPT request or validation failed", retryable=retryable) from exc
+                if isinstance(exc, UnquotedComplaint):
+                    return _unquoted_result(exc, self.model)
+                raise LLMError(f"YandexGPT request or validation failed: {_failure_reason(exc)}", retryable=retryable) from exc
         raise AssertionError("The initial YandexGPT attempt was skipped")
 
 

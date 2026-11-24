@@ -1,4 +1,4 @@
-import { apiGet, apiRequest } from "./api.js";
+import { apiGet, apiRequest, ruleLabel } from "./api.js";
 
 const endpoint = "/api/demo/feedback";
 const form = document.getElementById("feedback-form");
@@ -25,6 +25,16 @@ function currentMonth() {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
 }
 
+// crypto.randomUUID exists only in a secure context (https or localhost).
+function newId() {
+  if (crypto.randomUUID) return crypto.randomUUID();
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  return hex.replace(/^(.{8})(.{4})(.{4})(.{4})(.{12})$/, "$1-$2-$3-$4-$5");
+}
+
 function rememberSubmission() {
   const url = new URL(location.href);
   if (submissionId) url.searchParams.set("submission", submissionId);
@@ -42,8 +52,8 @@ function showStatus(result) {
   inbox.hidden = !result.signal_codes.length;
   if (result.analysis_status === "done") {
     const signal = result.signal_codes.length
-      ? `Сигналы: ${result.signal_codes.join(", ")}.`
-      : "Флажков нет.";
+      ? `Сигналы: ${result.signal_codes.map(ruleLabel).join("; ")}.`
+      : "Сигналов нет.";
     status.textContent = `Анализ готов (${result.model}). ${signal}`;
     return true;
   }
@@ -120,7 +130,7 @@ form.addEventListener("submit", async (event) => {
     comment: text,
   };
   if (!draft || Object.keys(payload).some((key) => payload[key] !== draft[key])) {
-    draft = { submission_id: crypto.randomUUID(), ...payload };
+    draft = { submission_id: newId(), ...payload };
   }
   status.textContent = "Отправляем анкету…";
   card.hidden = inbox.hidden = true;

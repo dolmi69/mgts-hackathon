@@ -1,5 +1,6 @@
 import {
-  apiGet, apiRequest, escapeHtml, flagChip, formatDateTime, hideError, showError,
+  apiGet, apiRequest, escapeHtml, formatDateTime, hideError, priorityBadge, showError,
+  waitingBadge,
 } from "./api.js";
 
 const form = document.getElementById("signal-filters");
@@ -22,8 +23,8 @@ const states = {
 
 const followups = {
   waiting: "Не все нужные ответы обработаны",
-  repeated: "Правило сработало снова",
-  not_repeated: "То же правило не сработало",
+  repeated: "Тот же сигнал появился снова",
+  not_repeated: "Такого сигнала больше нет",
 };
 
 let internId = null;
@@ -86,9 +87,10 @@ function renderSignal(signal, canWrite) {
     <article class="card signal-inbox-item" data-severity="${escapeHtml(signal.severity)}">
       <header class="signal-inbox-header">
         <div class="chips">
-          ${flagChip(signal, false)}
+          ${priorityBadge(signal.severity)}
           <span class="badge ${stateClass}">${escapeHtml(states[signal.state])}</span>
-          ${signal.active ? "" : '<span class="badge neutral">Правило больше не срабатывает</span>'}
+          ${waitingBadge(signal.waiting_days, signal.overdue)}
+          ${signal.active ? "" : '<span class="badge neutral">Причина больше не подтверждается</span>'}
         </div>
         <span class="signal-inbox-subhead">${escapeHtml(signal.period_label)}</span>
       </header>
@@ -101,6 +103,7 @@ function renderSignal(signal, canWrite) {
       <p>${escapeHtml(signal.explanation)}</p>
       <div class="signal-inbox-links">
         ${sources || `<a href="${card}">Карточка стажёра</a>`}
+        <small class="muted">правило ${escapeHtml(signal.rule_code)}</small>
       </div>
       ${followup}
       ${actionHistory(signal.history)}
